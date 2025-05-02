@@ -54,6 +54,7 @@ def main():
         level=logging.INFO,
         filename=logfile)
     logger.info(args)
+    print(args)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -86,6 +87,7 @@ def main():
     # Training
     start_train_time = time.time()
     logger.info('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
+    print('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
     for epoch in range(args.epochs):
         start_epoch_time = time.time()
         train_loss = 0
@@ -112,9 +114,12 @@ def main():
         lr = scheduler.get_lr()[0]
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
             epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n)
+        print('%d \t %.1f \t \t %.4f \t %.4f \t %.4f' % (
+            epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n))
     train_time = time.time()
     torch.save(model.state_dict(), os.path.join(args.out_dir, 'model.pth'))
     logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
+    print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
 
     # Evaluation
     model_test = PreActResNet18().cuda()
@@ -126,7 +131,9 @@ def main():
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
 
     logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
+    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
     logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc)
+    print('%.4f \t \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc))
 
 
 if __name__ == "__main__":
