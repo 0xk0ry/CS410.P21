@@ -1,6 +1,5 @@
 # This module is adapted from https://github.com/mahyarnajibi/FreeAdversarialTraining/blob/master/main_free.py
 # Which in turn was adapted from https://github.com/pytorch/examples/blob/master/imagenet/main.py
-import init_paths
 import argparse
 import os
 import time
@@ -177,7 +176,7 @@ def main():
 # Fast Adversarial Training Module        
 global global_noise_data
 global_noise_data = torch.zeros([configs.DATA.batch_size, 3, configs.DATA.crop_size, configs.DATA.crop_size]).cuda()
-def train(train_loader, model, criterion, optimizer, epoch, lr_schedule, half=False): 
+def train(train_loader, model, criterion, optimizer, epoch, lr_schedule, half=False):
     global global_noise_data
 
     mean = torch.Tensor(np.array(configs.TRAIN.mean)[:, np.newaxis, np.newaxis])
