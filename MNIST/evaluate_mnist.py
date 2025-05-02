@@ -1,125 +1,103 @@
+#!/usr/bin/env python3
 import argparse
-import logging
-import sys
-import time
-
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Dataset
+import torchvision.transforms as transforms
+from torchvision.datasets import CIFAR10
+from torch.utils.data import DataLoader
+import torchvision.models as models
 
-from mnist_net import mnist_net
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    format='[%(asctime)s %(filename)s %(name)s %(levelname)s] - %(message)s',
-    datefmt='%Y/%m/%d %H:%M:%S',
-    level=logging.INFO)
-
-
-def clamp(X, lower_limit, upper_limit):
-    return torch.max(torch.min(X, upper_limit), lower_limit)
+def fgsm_attack(model, x, y, epsilon, device):
+    x_adv = x.clone().detach().to(device)
+    x_adv.requires_grad = True
+    outputs = model(x_adv)
+    loss = nn.CrossEntropyLoss()(outputs, y.to(device))
+    model.zero_grad(); loss.backward()
+    grad = x_adv.grad.data
+    x_adv = x_adv + epsilon * grad.sign()
+    return torch.clamp(x_adv, 0, 1)
 
 
-def attack_fgsm(model, X, y, epsilon):
-    delta = torch.zeros_like(X, requires_grad=True)
-    output = model(X + delta)
-    loss = F.cross_entropy(output, y)
-    loss.backward()
-    grad = delta.grad.detach()
-    delta.data = epsilon * torch.sign(grad)
-    return delta.detach()
+def fgsm_rs_attack(model, x, y, epsilon, alpha_init, device):
+    delta = torch.empty_like(x).uniform_(-alpha_init, alpha_init).to(device)
+    x0 = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
+    outputs = model(x0)
+    loss = nn.CrossEntropyLoss()(outputs, y.to(device))
+    model.zero_grad(); loss.backward()
+    grad = x0.grad.data
+    x_adv = x0 + epsilon * grad.sign()
+    return torch.clamp(x_adv, 0, 1)
 
 
-def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts):
-    max_loss = torch.zeros(y.shape[0]).cuda()
-    max_delta = torch.zeros_like(X).cuda()
-    for _ in range(restarts):
-        delta = torch.zeros_like(X).uniform_(-epsilon, epsilon).cuda()
-        delta.data = clamp(delta, 0-X, 1-X)
-        delta.requires_grad = True
-        for _ in range(attack_iters):
-            output = model(X + delta)
-            index = torch.where(output.max(1)[1] == y)[0]
-            if len(index) == 0:
-                break
-            loss = F.cross_entropy(output, y)
-            loss.backward()
-            grad = delta.grad.detach()
-            d = torch.clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
-            d = clamp(d, 0-X, 1-X)
-            delta.data[index] = d[index]
-            delta.grad.zero_()
-        all_loss = F.cross_entropy(model(X+delta), y, reduction='none')
-        max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
-        max_loss = torch.max(max_loss, all_loss)
-    return max_delta
+def pgd_attack(model, x, y, epsilon, alpha, iters, device):
+    delta = torch.empty_like(x).uniform_(-epsilon, epsilon).to(device)
+    for _ in range(iters):
+        x_adv = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
+        outputs = model(x_adv)
+        loss = nn.CrossEntropyLoss()(outputs, y.to(device))
+        model.zero_grad(); loss.backward()
+        grad = x_adv.grad.data
+        delta = torch.clamp(delta + alpha * grad.sign(), -epsilon, epsilon)
+    x_adv = torch.clamp(x + delta, 0, 1)
+    return x_adv
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', default=100, type=int)
-    parser.add_argument('--data-dir', default='../mnist-data', type=str)
-    parser.add_argument('--fname', type=str)
-    parser.add_argument('--attack', default='pgd', type=str, choices=['pgd', 'fgsm', 'none'])
-    parser.add_argument('--epsilon', default=0.3, type=float)
-    parser.add_argument('--attack-iters', default=50, type=int)
-    parser.add_argument('--alpha', default=1e-2, type=float)
-    parser.add_argument('--restarts', default=10, type=int)
-    parser.add_argument('--seed', default=0, type=int)
-    return parser.parse_args()
-
-
-def main():
-    args = get_args()
-    logger.info(args)
-
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
-
-    mnist_test = datasets.MNIST(args.data_dir, train=False, download=True, transform=transforms.ToTensor())
-    test_loader = torch.utils.data.DataLoader(mnist_test, batch_size=args.batch_size, shuffle=False)
-
-    model = mnist_net().cuda()
-    checkpoint = torch.load(args.fname, weights_only=True)
-    model.load_state_dict(checkpoint, strict=False)
-    model.eval()
-
-    total_loss = 0
-    total_acc = 0
-    n = 0
-
-    if args.attack == 'none':
+def evaluate(model, loader, device, attack, epsilon, alpha, alpha_init, iters):
+    model.to(device).eval()
+    correct = 0
+    total = 0
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        if attack == 'none':
+            x_eval = x
+        elif attack == 'fgsm':
+            x_eval = fgsm_attack(model, x, y, epsilon, device)
+        elif attack == 'fgsm_rs':
+            x_eval = fgsm_rs_attack(model, x, y, epsilon, alpha_init, device)
+        elif attack == 'pgd':
+            x_eval = pgd_attack(model, x, y, epsilon, alpha, iters, device)
+        else:
+            raise ValueError(f"Unsupported attack: {attack}")
         with torch.no_grad():
-            for i, (X, y) in enumerate(test_loader):
-                X, y = X.cuda(), y.cuda()
-                output = model(X)
-                loss = F.cross_entropy(output, y)
-                total_loss += loss.item() * y.size(0)
-                total_acc += (output.max(1)[1] == y).sum().item()
-                n += y.size(0)
-    else:
-        for i, (X, y) in enumerate(test_loader):
-            X, y = X.cuda(), y.cuda()
-            if args.attack == 'pgd':
-                delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts)
-            elif args.attack == 'fgsm':
-                delta = attack_fgsm(model, X, y, args.epsilon)
-            with torch.no_grad():
-                output = model(X + delta)
-                loss = F.cross_entropy(output, y)
-                total_loss += loss.item() * y.size(0)
-                total_acc += (output.max(1)[1] == y).sum().item()
-                n += y.size(0)
+            outputs = model(x_eval)
+        _, preds = outputs.max(1)
+        correct += (preds == y).sum().item()
+        total += y.size(0)
+    acc = 100.0 * correct / total
+    print(f"{attack.upper()} Accuracy: {acc:.2f}% ({correct}/{total})")
+    return acc
 
-    logger.info('Test Loss: %.4f, Acc: %.4f', total_loss/n, total_acc/n)
-    print('=' * 20)
-    print(args)
-    print('Test Loss: %.4f, Acc: %.4f' % (total_loss/n, total_acc/n))
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Evaluate CIFAR-10 Model with Adversarial Attacks')
+    parser.add_argument('--data-dir', type=str, required=True, help='CIFAR-10 data directory')
+    parser.add_argument('--model-path', type=str, required=True, help='Path to model checkpoint (.pth)')
+    parser.add_argument('--attack', choices=['none','fgsm','fgsm_rs','pgd'], default='none')
+    parser.add_argument('--epsilon', type=float, default=8.0, help='Attack budget')
+    parser.add_argument('--alpha', type=float, default=2.0, help='Step size for PGD')
+    parser.add_argument('--alpha-init', type=float, default=1.0, help='Random start radius for FGSM-RS')
+    parser.add_argument('--attack-iters', type=int, default=7, help='Iterations for PGD')
+    parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--use-cuda', action='store_true')
+    args = parser.parse_args()
 
-if __name__ == "__main__":
-    main()
+    device = torch.device('cuda' if args.use_cuda and torch.cuda.is_available() else 'cpu')
+
+    # Data loader
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465),
+                             (0.2470, 0.2435, 0.2616))
+    ])
+    testset = CIFAR10(root=args.data_dir, train=False, download=True, transform=transform)
+    loader = DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+
+    # Load model
+    model = models.resnet18(num_classes=10)
+    state = torch.load(args.model_path, map_location=device)
+    model.load_state_dict(state)
+
+    # Evaluate for chosen attack
+    evaluate(model, loader, device,
+             args.attack, args.epsilon,
+             args.alpha, args.alpha_init,
+             args.attack_iters)
