@@ -85,8 +85,8 @@ def main():
     test_loader = torch.utils.data.DataLoader(mnist_test, batch_size=args.batch_size, shuffle=False)
 
     model = mnist_net().cuda()
-    checkpoint = torch.load(args.fname)
-    model.load_state_dict(checkpoint, strict=False, weights_only=True)
+    checkpoint = torch.load(args.fname, weights_only=True)
+    model.load_state_dict(checkpoint, strict=False)
     model.eval()
 
     total_loss = 0
