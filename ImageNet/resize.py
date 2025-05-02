@@ -6,9 +6,9 @@ import multiprocessing
 cpus = multiprocessing.cpu_count()
 cpus = min(48,cpus)
 
-PATH = '/kaggle/input/tiny-imagenet/tiny-imagenet-200'
+PATH = Path('/kaggle/input/tiny-imagenet/tiny-imagenet-200')
 #DEST = Path('/mnt/ram')
-DEST = '/kaggle/working/data/ImageNet'
+DEST = Path('/kaggle/working/data/ImageNet')
 #szs = (int(128*1.25), int(256*1.25))
 # szs = (int(160*1.25),)
 szs = (160,352)
