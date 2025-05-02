@@ -21,18 +21,14 @@ def parse_args():
                         choices=['resnet50','resnet18'], help='Model architecture')
     parser.add_argument('--pretrained', action='store_true',
                         help='Use pretrained weights')
-    parser.add_argument('--attack', choices=['fgsm','fgsm_rs','pgd','free'], default='fgsm_rs',
-                        help='Adversarial training method')
+    parser.add_argument('--attack', choices=['fgsm','pgd','none'], default='none',
+                        help='Attack type for evaluation')
     parser.add_argument('--eps', type=float, default=2/255,
                         help='Max perturbation (e.g. 2/255)')
-    parser.add_argument('--alpha_init', type=float, default=1/255,
-                        help='Random start magnitude for FGSM-RS')
     parser.add_argument('--alpha', type=float, default=4/255,
-                        help='Step size for PGD and Free')
-    parser.add_argument('--num_steps', type=int, default=7,
+                        help='Step size for PGD')
+    parser.add_argument('--num-steps', type=int, default=7,
                         help='Number of PGD iterations')
-    parser.add_argument('--free_replays', type=int, default=4,
-                        help='Number of replays for Free adversarial training')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=256)
@@ -84,16 +80,6 @@ def fgsm_step(model, x, y, eps, device):
     return torch.clamp(x_adv + eps * grad.sign(), 0, 1)
 
 
-def fgsm_rs_step(model, x, y, eps, alpha_init, device):
-    delta = torch.empty_like(x).uniform_(-alpha_init, alpha_init).to(device)
-    x0 = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
-    outputs = model(x0)
-    loss = nn.CrossEntropyLoss()(outputs, y)
-    model.zero_grad(); loss.backward()
-    grad = x0.grad.data
-    return torch.clamp(x0 + eps * grad.sign(), 0, 1)
-
-
 def pgd_step(model, x, y, eps, alpha, steps, device):
     delta = torch.empty_like(x).uniform_(-eps, eps).to(device)
     for _ in range(steps):
@@ -105,22 +91,6 @@ def pgd_step(model, x, y, eps, alpha, steps, device):
         delta = torch.clamp(delta + alpha * grad.sign(), -eps, eps)
     return torch.clamp(x + delta, 0, 1)
 
-# Free adversarial: K-step FGSM replays
-
-def free_step(model, x, y, eps, alpha, replays, device):
-    delta = torch.zeros_like(x).to(device)
-    for _ in range(replays):
-        x_adv = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
-        outputs = model(x_adv)
-        loss = nn.CrossEntropyLoss()(outputs, y)
-        model.zero_grad(); loss.backward()
-        grad = x_adv.grad.data
-        delta = torch.clamp(delta + alpha * grad.sign(), -eps, eps)
-        # update model with same loss
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-        optimizer.zero_grad(); loss.backward(); optimizer.step()
-    return torch.clamp(x + delta, 0, 1)
-
 # ----------------------------
 # Training one epoch
 # ----------------------------
@@ -128,19 +98,36 @@ def train_one_epoch(model, loader, optimizer, device, args):
     model.train()
     for x, y in loader:
         x, y = x.to(device), y.to(device)
+        # default no attack
+        x_adv = x
         if args.attack == 'fgsm':
             x_adv = fgsm_step(model, x, y, args.eps, device)
-        elif args.attack == 'fgsm_rs':
-            x_adv = fgsm_rs_step(model, x, y, args.eps, args.alpha_init, device)
         elif args.attack == 'pgd':
             x_adv = pgd_step(model, x, y, args.eps, args.alpha, args.num_steps, device)
-        elif args.attack == 'free':
-            x_adv = free_step(model, x, y, args.eps, args.alpha, args.free_replays, device)
-        else:
-            raise ValueError(f"Unknown attack {args.attack}")
         outputs = model(x_adv)
         loss = nn.CrossEntropyLoss()(outputs, y)
         optimizer.zero_grad(); loss.backward(); optimizer.step()
+
+# ----------------------------
+# Evaluation
+# ----------------------------
+def evaluate(model, loader, device, attack, eps, alpha, steps):
+    model.eval()
+    correct = 0; total = 0
+    with torch.no_grad():
+        for x, y in loader:
+            x, y = x.to(device), y.to(device)
+            if attack == 'fgsm':
+                x_eval = fgsm_step(model, x, y, eps, device)
+            elif attack == 'pgd':
+                x_eval = pgd_step(model, x, y, eps, alpha, steps, device)
+            else:
+                x_eval = x
+            preds = model(x_eval).argmax(dim=1)
+            correct += (preds == y).sum().item(); total += y.size(0)
+    acc = 100.0 * correct / total
+    print(f"{attack.upper() if attack!='none' else 'CLEAN'} Accuracy: {acc:.2f}% ({correct}/{total})")
+    return acc
 
 # ----------------------------
 # Main
@@ -149,14 +136,14 @@ def main():
     args = parse_args()
     device = torch.device('cuda' if args.use_cuda and torch.cuda.is_available() else 'cpu')
 
-    # Model instantiation as in original
+    # Model instantiation
     if args.pretrained:
         print(f"=> using pre-trained model '{args.arch}'")
         model = models.__dict__[args.arch](pretrained=True)
     else:
         print(f"=> creating model '{args.arch}'")
         model = models.__dict__[args.arch]()
-    model.cuda()
+    model = model.cuda()
 
     # parameter groups
     param_to_module = {}
@@ -164,22 +151,20 @@ def main():
         for p in module.parameters(recurse=False):
             param_to_module[p] = type(module).__name__
     group_decay    = [p for p in model.parameters() if 'BatchNorm' not in param_to_module[p]]
-    group_no_decay = [p for p in model.parameters() if 'BatchNorm' in param_to_module[p]]
+    group_no_decay = [p for p in model.parameters() if 'BatchNorm'     in param_to_module[p]]
     optimizer = optim.SGD(
-        [ {'params': group_decay}, {'params': group_no_decay, 'weight_decay': 0} ],
+        [{'params': group_decay}, {'params': group_no_decay, 'weight_decay': 0}],
         lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay
     )
-
     # mixed precision
     if args.half:
         model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
-
     model = nn.DataParallel(model)
 
-    # Data
+    # Data loaders
     train_loader, val_loader = get_dataloaders(args.data_dir, args.batch_size)
 
-    # Train
+    # Training
     os.makedirs(args.out_dir, exist_ok=True)
     for epoch in range(1, args.epochs+1):
         train_one_epoch(model, train_loader, optimizer, device, args)
@@ -187,15 +172,9 @@ def main():
         torch.save(model.state_dict(), ckpt)
         print(f"Epoch {epoch} done, saved to {ckpt}")
 
-    # Final clean eval
-    model.eval()
-    correct = total = 0
-    with torch.no_grad():
-        for x, y in val_loader:
-            x, y = x.to(device), y.to(device)
-            preds = model(x).argmax(dim=1)
-            correct += (preds == y).sum().item(); total += y.size(0)
-    print(f"Final Clean Acc: {100*correct/total:.2f}%")
+    # Final evaluation under all attacks
+    for at in ['none', 'fgsm', 'pgd']:
+        evaluate(model, val_loader, device, at, args.eps, args.alpha, args.num_steps)
 
 if __name__ == '__main__':
     main()
