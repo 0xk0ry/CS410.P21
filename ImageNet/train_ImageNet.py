@@ -1,268 +1,201 @@
-# This module is adapted from https://github.com/mahyarnajibi/FreeAdversarialTraining/blob/master/main_free.py
-# Which in turn was adapted from https://github.com/pytorch/examples/blob/master/imagenet/main.py
+#!/usr/bin/env python3
 import argparse
 import os
-import time
-import sys
 import torch
 import torch.nn as nn
-import torch.backends.cudnn as cudnn
-import torch.optim
+import torch.optim as optim
+import torchvision
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-from torch.autograd import Variable
-import math
-import numpy as np
-from lib.utils import *  # Ensure AverageMeter is defined in utils or import it explicitly if available
-from lib.validation import validate, validate_pgd
-import torchvision.models as models
-
+from torch.utils.data import DataLoader
+from torchvision import models
 from apex import amp
-import copy
 
-
+# ----------------------------
+# Argument parser
+# ----------------------------
 def parse_args():
-    parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
-    parser.add_argument('--output_prefix', default='fast_adv', type=str,
-                    help='prefix used to define output path')
-    parser.add_argument('-c', '--config', default='configs.yml', type=str, metavar='Path',
-                    help='path to the config file (default: configs.yml)')
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
-    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
-    parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    help='use pre-trained model')
-    parser.add_argument('--restarts', default=1, type=int)
+    parser = argparse.ArgumentParser(description='ImageNet Adversarial Training')
+    parser.add_argument('--data-dir', type=str, required=True,
+                        help='Path to ImageNet train/val folders')
+    parser.add_argument('--arch', type=str, default='resnet50',
+                        choices=['resnet50','resnet18'], help='Model architecture')
+    parser.add_argument('--pretrained', action='store_true',
+                        help='Use pretrained weights')
+    parser.add_argument('--attack', choices=['fgsm','fgsm_rs','pgd','free'], default='fgsm_rs',
+                        help='Adversarial training method')
+    parser.add_argument('--eps', type=float, default=2/255,
+                        help='Max perturbation (e.g. 2/255)')
+    parser.add_argument('--alpha_init', type=float, default=1/255,
+                        help='Random start magnitude for FGSM-RS')
+    parser.add_argument('--alpha', type=float, default=4/255,
+                        help='Step size for PGD and Free')
+    parser.add_argument('--num_steps', type=int, default=7,
+                        help='Number of PGD iterations')
+    parser.add_argument('--free_replays', type=int, default=4,
+                        help='Number of replays for Free adversarial training')
+    parser.add_argument('--epochs', type=int, default=15,
+                        help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=256)
+    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--weight-decay', type=float, default=1e-4)
+    parser.add_argument('--half', action='store_true',
+                        help='Use mixed precision (apex)')
+    parser.add_argument('--out-dir', type=str, default='./outputs',
+                        help='Directory to save checkpoints')
+    parser.add_argument('--use-cuda', action='store_true')
     return parser.parse_args()
 
+# ----------------------------
+# Data loaders
+# ----------------------------
+def get_dataloaders(data_dir, batch_size):
+    train_dir = os.path.join(data_dir, 'train')
+    val_dir   = os.path.join(data_dir, 'val')
+    normalize = transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    train_ds = torchvision.datasets.ImageFolder(train_dir, transform=train_transform)
+    val_ds   = torchvision.datasets.ImageFolder(val_dir,   transform=val_transform)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=8, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    return train_loader, val_loader
 
-# Parase config file and initiate logging
-configs = parse_config_file(parse_args())
-logger = initiate_logger(configs.output_name, configs.evaluate)
-print = logger.info
-cudnn.benchmark = True
+# ----------------------------
+# Attack implementations
+# ----------------------------
+def fgsm_step(model, x, y, eps, device):
+    x_adv = x.clone().detach().to(device)
+    x_adv.requires_grad = True
+    outputs = model(x_adv)
+    loss = nn.CrossEntropyLoss()(outputs, y)
+    model.zero_grad(); loss.backward()
+    grad = x_adv.grad.data
+    return torch.clamp(x_adv + eps * grad.sign(), 0, 1)
 
+
+def fgsm_rs_step(model, x, y, eps, alpha_init, device):
+    delta = torch.empty_like(x).uniform_(-alpha_init, alpha_init).to(device)
+    x0 = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
+    outputs = model(x0)
+    loss = nn.CrossEntropyLoss()(outputs, y)
+    model.zero_grad(); loss.backward()
+    grad = x0.grad.data
+    return torch.clamp(x0 + eps * grad.sign(), 0, 1)
+
+
+def pgd_step(model, x, y, eps, alpha, steps, device):
+    delta = torch.empty_like(x).uniform_(-eps, eps).to(device)
+    for _ in range(steps):
+        x_adv = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
+        outputs = model(x_adv)
+        loss = nn.CrossEntropyLoss()(outputs, y)
+        model.zero_grad(); loss.backward()
+        grad = x_adv.grad.data
+        delta = torch.clamp(delta + alpha * grad.sign(), -eps, eps)
+    return torch.clamp(x + delta, 0, 1)
+
+# Free adversarial: K-step FGSM replays
+
+def free_step(model, x, y, eps, alpha, replays, device):
+    delta = torch.zeros_like(x).to(device)
+    for _ in range(replays):
+        x_adv = torch.clamp(x + delta, 0, 1).detach().requires_grad_(True)
+        outputs = model(x_adv)
+        loss = nn.CrossEntropyLoss()(outputs, y)
+        model.zero_grad(); loss.backward()
+        grad = x_adv.grad.data
+        delta = torch.clamp(delta + alpha * grad.sign(), -eps, eps)
+        # update model with same loss
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+        optimizer.zero_grad(); loss.backward(); optimizer.step()
+    return torch.clamp(x + delta, 0, 1)
+
+# ----------------------------
+# Training one epoch
+# ----------------------------
+def train_one_epoch(model, loader, optimizer, device, args):
+    model.train()
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        if args.attack == 'fgsm':
+            x_adv = fgsm_step(model, x, y, args.eps, device)
+        elif args.attack == 'fgsm_rs':
+            x_adv = fgsm_rs_step(model, x, y, args.eps, args.alpha_init, device)
+        elif args.attack == 'pgd':
+            x_adv = pgd_step(model, x, y, args.eps, args.alpha, args.num_steps, device)
+        elif args.attack == 'free':
+            x_adv = free_step(model, x, y, args.eps, args.alpha, args.free_replays, device)
+        else:
+            raise ValueError(f"Unknown attack {args.attack}")
+        outputs = model(x_adv)
+        loss = nn.CrossEntropyLoss()(outputs, y)
+        optimizer.zero_grad(); loss.backward(); optimizer.step()
+
+# ----------------------------
+# Main
+# ----------------------------
 def main():
-    # Scale and initialize the parameters
-    best_prec1 = 0
-    configs.TRAIN.epochs = int(math.ceil(configs.TRAIN.epochs / configs.ADV.n_repeats))
-    configs.ADV.fgsm_step /= configs.DATA.max_color_value
-    configs.ADV.clip_eps /= configs.DATA.max_color_value
-    
-    # Create output folder
-    if not os.path.isdir(os.path.join('trained_models', configs.output_name)):
-        os.makedirs(os.path.join('trained_models', configs.output_name))
-    
-    # Log the config details
-    logger.info(pad_str(' ARGUMENTS '))
-    for k, v in configs.items(): print('{}: {}'.format(k, v))
-    logger.info(pad_str(''))
+    args = parse_args()
+    device = torch.device('cuda' if args.use_cuda and torch.cuda.is_available() else 'cpu')
 
-    
-    # Create the model
-    if configs.pretrained:
-        print("=> using pre-trained model '{}'".format(configs.TRAIN.arch))
-        model = models.__dict__[configs.TRAIN.arch](pretrained=True)
+    # Model instantiation as in original
+    if args.pretrained:
+        print(f"=> using pre-trained model '{args.arch}'")
+        model = models.__dict__[args.arch](pretrained=True)
     else:
-        print("=> creating model '{}'".format(configs.TRAIN.arch))
-        model = models.__dict__[configs.TRAIN.arch]()
-    # Wrap the model into DataParallel
+        print(f"=> creating model '{args.arch}'")
+        model = models.__dict__[args.arch]()
     model.cuda()
 
-    # reverse mapping
-    param_to_moduleName = {}
-    for m in model.modules():
-        for p in m.parameters(recurse=False):
-            param_to_moduleName[p] = str(type(m).__name__)
+    # parameter groups
+    param_to_module = {}
+    for module in model.modules():
+        for p in module.parameters(recurse=False):
+            param_to_module[p] = type(module).__name__
+    group_decay    = [p for p in model.parameters() if 'BatchNorm' not in param_to_module[p]]
+    group_no_decay = [p for p in model.parameters() if 'BatchNorm' in param_to_module[p]]
+    optimizer = optim.SGD(
+        [ {'params': group_decay}, {'params': group_no_decay, 'weight_decay': 0} ],
+        lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay
+    )
 
-    # Criterion:
-    criterion = nn.CrossEntropyLoss().cuda()
-    
-    group_decay = [p for p in model.parameters() if 'BatchNorm' not in param_to_moduleName[p]]
-    group_no_decay = [p for p in model.parameters() if 'BatchNorm' in param_to_moduleName[p]]
-    groups = [dict(params=group_decay), dict(params=group_no_decay, weight_decay=0)]
-    optimizer = torch.optim.SGD(groups, configs.TRAIN.lr,
-                                momentum=configs.TRAIN.momentum,
-                                weight_decay=configs.TRAIN.weight_decay)
-
-    if configs.TRAIN.half and not configs.evaluate:
+    # mixed precision
+    if args.half:
         model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
-    model = torch.nn.DataParallel(model)
 
-    # Resume if a valid checkpoint path is provided
-    if configs.resume:
-        if os.path.isfile(configs.resume):
-            print("=> loading checkpoint '{}'".format(configs.resume))
-            checkpoint = torch.load(configs.resume)
-            configs.TRAIN.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(configs.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(configs.resume))
-    
-    # Initiate data loaders
-    traindir = os.path.join(configs.data, 'train')
-    valdir = os.path.join(configs.data, 'val')
-    
-    resize_transform = []
+    model = nn.DataParallel(model)
 
-    if configs.DATA.img_size > 0: 
-        resize_transform = [ transforms.Resize(configs.DATA.img_size) ] 
+    # Data
+    train_loader, val_loader = get_dataloaders(args.data_dir, args.batch_size)
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose(resize_transform + [
-            transforms.RandomResizedCrop(configs.DATA.crop_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ]))
+    # Train
+    os.makedirs(args.out_dir, exist_ok=True)
+    for epoch in range(1, args.epochs+1):
+        train_one_epoch(model, train_loader, optimizer, device, args)
+        ckpt = os.path.join(args.out_dir, f"{args.attack}_epoch{epoch}.pth")
+        torch.save(model.state_dict(), ckpt)
+        print(f"Epoch {epoch} done, saved to {ckpt}")
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=configs.DATA.batch_size, shuffle=True,
-        num_workers=configs.DATA.workers, pin_memory=True, sampler=None)
-    
-    normalize = transforms.Normalize(mean=configs.TRAIN.mean,
-                                    std=configs.TRAIN.std)
-
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose( resize_transform + [
-            transforms.CenterCrop(configs.DATA.crop_size),
-            transforms.ToTensor(),
-        ])),
-        batch_size=configs.DATA.batch_size, shuffle=False,
-        num_workers=configs.DATA.workers, pin_memory=True)
-
-    # If in evaluate mode: perform validation on PGD attacks as well as clean samples
-    if configs.evaluate:
-        logger.info(pad_str(' Performing PGD Attacks '))
-        for pgd_param in configs.ADV.pgd_attack:
-            validate_pgd(val_loader, model, criterion, pgd_param[0], pgd_param[1], configs, logger)
-        validate(val_loader, model, criterion, configs, logger)
-        return
-    
-    lr_schedule = lambda t: np.interp([t], configs.TRAIN.lr_epochs, configs.TRAIN.lr_values)[0]
-    
-    for epoch in range(configs.TRAIN.start_epoch, configs.TRAIN.epochs):
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, lr_schedule, configs.TRAIN.half)
-
-        # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion, configs, logger)
-
-        # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': configs.TRAIN.arch,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-            'optimizer' : optimizer.state_dict(),
-        }, is_best, os.path.join('trained_models', f'{configs.output_name}'),
-        epoch + 1)
-        
-    # Automatically perform PGD Attacks at the end of training
-    # logger.info(pad_str(' Performing PGD Attacks '))
-    # for pgd_param in configs.ADV.pgd_attack:
-    #     validate_pgd(val_loader, val_model, criterion, pgd_param[0], pgd_param[1], configs, logger)
-
-        
-# Fast Adversarial Training Module        
-global global_noise_data
-global_noise_data = torch.zeros([configs.DATA.batch_size, 3, configs.DATA.crop_size, configs.DATA.crop_size]).cuda()
-def train(train_loader, model, criterion, optimizer, epoch, lr_schedule, half=False):
-    global global_noise_data
-
-    mean = torch.Tensor(np.array(configs.TRAIN.mean)[:, np.newaxis, np.newaxis])
-    mean = mean.expand(3,configs.DATA.crop_size, configs.DATA.crop_size).cuda()
-    std = torch.Tensor(np.array(configs.TRAIN.std)[:, np.newaxis, np.newaxis])
-    std = std.expand(3, configs.DATA.crop_size, configs.DATA.crop_size).cuda()
-
-    # Initialize the meters
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    # switch to train mode
-    model.train()
-    end = time.time()
-    for i, (input, target) in enumerate(train_loader):
-        input = input.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
-        data_time.update(time.time() - end)
-
-        if configs.TRAIN.random_init: 
-            global_noise_data.uniform_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
-        for j in range(configs.ADV.n_repeats):
-            # update learning rate
-            lr = lr_schedule(epoch + (i*configs.ADV.n_repeats + j + 1)/len(train_loader))
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-
-            # Ascend on the global noise
-            noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=True)#.cuda()
-            in1 = input + noise_batch
-            in1.clamp_(0, 1.0)
-            in1.sub_(mean).div_(std)
-            output = model(in1)
-            loss = criterion(output, target)
-            if half: 
-                with amp.scale_loss(loss, optimizer) as scaled_loss: 
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-            
-            # Update the noise for the next iteration
-            pert = fgsm(noise_batch.grad, configs.ADV.fgsm_step)
-            global_noise_data[0:input.size(0)] += pert.data
-            global_noise_data.clamp_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
-
-            # Descend on global noise
-            noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=False)#.cuda()
-            in1 = input + noise_batch
-            in1.clamp_(0, 1.0)
-            in1.sub_(mean).div_(std)
-            output = model(in1)
-            loss = criterion(output, target)
-
-            # compute gradient and do SGD step
-            optimizer.zero_grad()
-            if half: 
-                with amp.scale_loss(loss, optimizer) as scaled_loss: 
-                    scaled_loss.backward()
-            else: 
-                loss.backward()
-
-            optimizer.step()
-
-            prec1, prec5 = accuracy(output, target, topk=(1, 5))
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec1[0], input.size(0))
-            top5.update(prec5[0], input.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % configs.TRAIN.print_freq == 0:
-                print('Train Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                      'Loss {cls_loss.val:.4f} ({cls_loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
-                      'LR {lr:.3f}'.format(
-                       epoch, i, len(train_loader), batch_time=batch_time,
-                       data_time=data_time, top1=top1,
-                       top5=top5,cls_loss=losses, lr=lr))
-                sys.stdout.flush()
+    # Final clean eval
+    model.eval()
+    correct = total = 0
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            preds = model(x).argmax(dim=1)
+            correct += (preds == y).sum().item(); total += y.size(0)
+    print(f"Final Clean Acc: {100*correct/total:.2f}%")
 
 if __name__ == '__main__':
     main()
