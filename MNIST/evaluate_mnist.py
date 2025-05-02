@@ -81,7 +81,7 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
 
-    mnist_test = datasets.MNIST("../mnist-data", train=False, download=True, transform=transforms.ToTensor())
+    mnist_test = datasets.MNIST(args.data_dir, train=False, download=True, transform=transforms.ToTensor())
     test_loader = torch.utils.data.DataLoader(mnist_test, batch_size=args.batch_size, shuffle=False)
 
     model = mnist_net().cuda()
