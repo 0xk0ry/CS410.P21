@@ -117,7 +117,7 @@ def main():
                 n += y.size(0)
 
     logger.info('Test Loss: %.4f, Acc: %.4f', total_loss/n, total_acc/n)
-
+    print(('Test Loss: %.4f, Acc: %.4f', total_loss/n, total_acc/n))
 
 if __name__ == "__main__":
     main()
