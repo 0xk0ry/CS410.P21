@@ -1,123 +1,145 @@
-#!/usr/bin/env python3
+import argparse
+import logging
+import time
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
+import torch.nn.functional as F
 import torchvision
-import torchvision.transforms as transforms
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-import argparse
 from mnist_net import mnist_net
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format='[%(asctime)s] - %(message)s',
+    datefmt='%Y/%m/%d %H:%M:%S',
+    level=logging.DEBUG)
 
-def train(args):
-    # Device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # Dataset and loader
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-    ])
-    trainset = torchvision.datasets.MNIST(root=args.data_dir, train=True, download=True, transform=transform)
-    loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
-    # Model and optimizer
-    model = mnist_net().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batch-size', default=100, type=int)
+    parser.add_argument('--data-dir', default='../mnist-data', type=str)
+    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--attack', default='fgsm', type=str, choices=['none', 'pgd', 'fgsm', 'free'])
+    parser.add_argument('--epsilon', default=0.3, type=float)
+    parser.add_argument('--alpha', default=0.375, type=float)
+    parser.add_argument('--attack-iters', default=40, type=int)
+    parser.add_argument('--free-replays', default=8, type=int)
+    parser.add_argument('--lr-max', default=5e-3, type=float)
+    parser.add_argument('--lr-type', default='cyclic')
+    parser.add_argument('--fname', default='mnist_model.pth', type=str)
+    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--zero-init', action='store_true', help='Use zero initialization for FGSM (no random start)')
+    return parser.parse_args()
+
+def main():
+    args = get_args()
+    logger.info(args)
+    print(args)
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+
+    mnist_train = datasets.MNIST(args.data_dir, train=True, download=True, transform=transforms.ToTensor())
+    train_loader = torch.utils.data.DataLoader(mnist_train, batch_size=args.batch_size, shuffle=True)
+
+    model = mnist_net().cuda()
+    model.train()
+
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr_max)
+    if args.lr_type == 'cyclic': 
+        lr_schedule = lambda t: np.interp([t], [0, args.epochs * 2//5, args.epochs], [0, args.lr_max, 0])[0]
+    elif args.lr_type == 'flat': 
+        lr_schedule = lambda t: args.lr_max
+    else:
+        raise ValueError('Unknown lr_type')
+
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(1, args.epochs+1):
-        model.train()
-        for x, y in loader:
-            x, y = x.to(device), y.to(device)
-            
-            # Free adversarial training
-            if args.attack == 'free':
-                delta = torch.zeros_like(x).to(device)
-                for _ in range(args.free_replays):
-                    # perturbed input
-                    x_adv = torch.clamp(x + delta, 0, 1).requires_grad_(True)
-                    outputs = model(x_adv)
-                    loss = criterion(outputs, y)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    # update model
-                    optimizer.step()
-                    # update perturbation
-                    grad = x_adv.grad.data
-                    delta = torch.clamp(delta + args.alpha * grad.sign(), -args.epsilon, args.epsilon)
-                continue
+    logger.info('Epoch \t Time \t LR \t \t Train Loss \t Train Acc')
+    print('Epoch \t Time \t LR \t \t Train Loss \t Train Acc')
+    for epoch in range(args.epochs):
+        start_time = time.time()
+        train_loss = 0
+        train_acc = 0
+        train_n = 0
+        for i, (X, y) in enumerate(train_loader):
+            X, y = X.cuda(), y.cuda()
+            lr = lr_schedule(epoch + (i+1)/len(train_loader))
+            opt.param_groups[0].update(lr=lr)
 
-            # FGSM and FGSM-RS share most logic
-            if args.attack in ['fgsm', 'fgsm_rs']:
-                # initialization of delta
-                if args.attack == 'fgsm':
-                    if args.zero_init:
-                        delta = torch.zeros_like(x)
-                    else:
-                        delta = torch.empty_like(x).uniform_(-args.alpha_init, args.alpha_init)
-                else:  # fgsm_rs
-                    delta = torch.empty_like(x).uniform_(-args.alpha_init, args.alpha_init)
-                # random start
-                x0 = torch.clamp(x + delta, 0, 1).requires_grad_(True)
-                # single FGSM step
-                outputs = model(x0)
-                loss = criterion(outputs, y)
-                optimizer.zero_grad()
+            if args.attack == 'fgsm':
+                if args.zero_init:
+                    delta = torch.zeros_like(X).cuda()
+                else:
+                    delta = torch.zeros_like(X).uniform_(-args.epsilon, args.epsilon).cuda()
+                delta.requires_grad = True
+                output = model(X + delta)
+                loss = F.cross_entropy(output, y)
                 loss.backward()
-                grad = x0.grad.data
-                delta = args.epsilon * grad.sign()
-                x_adv = torch.clamp(x0 + delta, 0, 1)
-                # update model on adversarial example
-                outputs_adv = model(x_adv)
-                loss_adv = criterion(outputs_adv, y)
-                optimizer.zero_grad()
-                loss_adv.backward()
-                optimizer.step()
-                continue
-
-            # PGD adversarial training
-            if args.attack == 'pgd':
-                # random start in epsilon-ball
-                delta = torch.empty_like(x).uniform_(-args.epsilon, args.epsilon).to(device)
+                grad = delta.grad.detach()
+                delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
+                delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
+                delta = delta.detach()
+                adv_X = torch.clamp(X + delta, 0, 1)
+            elif args.attack == 'none':
+                adv_X = X
+            elif args.attack == 'pgd':
+                delta = torch.zeros_like(X).uniform_(-args.epsilon, args.epsilon).cuda()
+                delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
                 for _ in range(args.attack_iters):
-                    x_delta = torch.clamp(x + delta, 0, 1).requires_grad_(True)
-                    outputs = model(x_delta)
-                    loss = criterion(outputs, y)
-                    optimizer.zero_grad()
+                    delta.requires_grad = True
+                    output = model(X + delta)
+                    loss = criterion(output, y)
+                    opt.zero_grad()
                     loss.backward()
-                    grad = x_delta.grad.data
-                    delta = torch.clamp(delta + args.alpha * grad.sign(), -args.epsilon, args.epsilon)
-                x_adv = torch.clamp(x + delta, 0, 1)
-                optimizer.zero_grad()
-                outputs_adv = model(x_adv)
-                loss_adv = criterion(outputs_adv, y)
-                loss_adv.backward()
-                optimizer.step()
-                continue
+                    grad = delta.grad.detach()
+                    I = output.max(1)[1] == y
+                    delta.data[I] = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)[I]
+                    delta.data[I] = torch.max(torch.min(1-X, delta.data), 0-X)[I]
+                delta = delta.detach()
+                adv_X = torch.clamp(X + delta, 0, 1)
+            elif args.attack == 'free':
+                # Free adversarial training
+                delta = torch.zeros_like(X).cuda()
+                for _ in range(args.free_replays):
+                    delta.requires_grad = True
+                    output = model(torch.clamp(X + delta, 0, 1))
+                    loss = criterion(output, y)
+                    opt.zero_grad()
+                    loss.backward()
+                    grad = delta.grad.detach()
+                    delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
+                    delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
+                    delta = delta.detach()
+                    # update model
+                    output = model(torch.clamp(X + delta, 0, 1))
+                    loss = criterion(output, y)
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+                continue  # skip the rest of the loop for free
+            else:
+                raise ValueError('Unknown attack')
 
-        print(f"Epoch {epoch}/{args.epochs} completed.")
+            output = model(adv_X)
+            loss = criterion(output, y)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
 
-    # Save model
-    init_type = 'zero' if args.zero_init else 'random'
-    torch.save(model.state_dict(), f"mnist_{args.attack}_{init_type}.pth")
-    print("Training complete. Model saved.")
+            train_loss += loss.item() * y.size(0)
+            train_acc += (output.max(1)[1] == y).sum().item()
+            train_n += y.size(0)
 
+        train_time = time.time()
+        logger.info('%d \t %.1f \t %.4f \t %.4f \t %.4f',
+            epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n)
+        print('%d \t %.1f \t %.4f \t %.4f \t %.4f' % (
+            epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n))
+        torch.save(model.state_dict(), args.fname)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='MNIST Adversarial Training')
-    parser.add_argument('--data-dir', type=str, required=True)
-    parser.add_argument('--attack', choices=['fgsm','fgsm_rs','pgd','free'], default='fgsm_rs',
-                        help='Attack method: fgsm (one-step), fgsm_rs (fast random-step), pgd (iterative), free (free adversarial)')
-    parser.add_argument('--epsilon', type=float, default=0.3, help='Max perturbation')
-    parser.add_argument('--alpha', type=float, default=0.01,
-                        help='Step size for PGD or Free replay')
-    parser.add_argument('--alpha_init', type=float, default=0.3,
-                        help='Random start magnitude for FGSM-RS or initial alpha for FGSM')
-    parser.add_argument('--attack-iters', type=int, default=40, help='Number of PGD iterations')
-    parser.add_argument('--free-replays', type=int, default=8,
-                        help='Number of replays for Free adversarial training')
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--batch-size', type=int, default=100)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--zero-init', action='store_true', help='Use zero initialization for FGSM')
-    args = parser.parse_args()
-    train(args)
+if __name__ == "__main__":
+    main()
