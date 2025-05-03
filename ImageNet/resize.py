@@ -11,7 +11,7 @@ PATH = Path('/kaggle/input/tiny-imagenet/tiny-imagenet-200')
 DEST = Path('/kaggle/working/data/ImageNet')
 #szs = (int(128*1.25), int(256*1.25))
 # szs = (int(160*1.25),)
-szs = (160)
+szs = (160,352)
 
 def resize_img(p, im, fn, sz):
     w,h = im.size
