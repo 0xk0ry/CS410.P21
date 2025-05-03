@@ -46,15 +46,12 @@ TRAIN:
     random_init: true
     
 ADV:
-    # FGSM parameters during training
+    adv_train: fast
     clip_eps: 2.0
     fgsm_step: 2.5
-
-    # Number of repeats for free adversarial training
+    pgd_alpha: 0.8
+    pgd_steps: 7
     n_repeats: 1
-
-    # PGD attack parameters used during validation
-    # the same clip_eps as above is used for PGD
     pgd_attack: 
     - !!python/tuple [10, 0.00392156862] #[10 iters, 1.0/255.0]
     - !!python/tuple [50, 0.00392156862] #[50 iters, 1.0/255.0]
@@ -78,4 +75,3 @@ DATA:
     # Crop Size for data augmentation
     crop_size: 224
 
-    

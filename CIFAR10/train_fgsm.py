@@ -48,7 +48,7 @@ def main():
 
     if not os.path.exists(args.out_dir):
         os.mkdir(args.out_dir)
-    logfile = os.path.join(args.out_dir, 'output.log')
+    logfile = os.path.join(args.out_dir, f'train_fgsm_output_{args.delta_init}.log')
     if os.path.exists(logfile):
         os.remove(logfile)
 
@@ -56,7 +56,7 @@ def main():
         format='[%(asctime)s] - %(message)s',
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.INFO,
-        filename=os.path.join(args.out_dir, 'output.log'))
+        filename=logfile)
     logger.info(args)
     print(args)
 
@@ -149,7 +149,7 @@ def main():
     train_time = time.time()
     if not args.early_stop:
         best_state_dict = model.state_dict()
-    torch.save(best_state_dict, os.path.join(args.out_dir, 'model.pth'))
+    torch.save(best_state_dict, os.path.join(args.out_dir, f'train_fgsm_output_{args.delta_init}.pth'))
     logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
     print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
 

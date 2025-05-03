@@ -37,11 +37,15 @@ def parse_args():
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
     parser.add_argument('--restarts', default=1, type=int)
+    parser.add_argument('--adv-train', default='fast', type=str, choices=['fast', 'fgsm_zero', 'fgsm_random', 'pgd'],
+                    help='Adversarial training style: fast (default), fgsm_zero, fgsm_random, pgd')
     return parser.parse_args()
 
 
 # Parase config file and initiate logging
-configs = parse_config_file(parse_args())
+args = parse_args()
+configs = parse_config_file(args)
+configs.adv_train = getattr(args, 'adv_train', 'fast')
 logger = initiate_logger(configs.output_name, configs.evaluate)
 print = logger.info
 cudnn.benchmark = True
@@ -179,91 +183,152 @@ global global_noise_data
 global_noise_data = torch.zeros([configs.DATA.batch_size, 3, configs.DATA.crop_size, configs.DATA.crop_size]).cuda()
 def train(train_loader, model, criterion, optimizer, epoch, lr_schedule, half=False): 
     global global_noise_data
-
     mean = torch.Tensor(np.array(configs.TRAIN.mean)[:, np.newaxis, np.newaxis])
     mean = mean.expand(3,configs.DATA.crop_size, configs.DATA.crop_size).cuda()
     std = torch.Tensor(np.array(configs.TRAIN.std)[:, np.newaxis, np.newaxis])
     std = std.expand(3, configs.DATA.crop_size, configs.DATA.crop_size).cuda()
-
-    # Initialize the meters
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-    # switch to train mode
     model.train()
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
         input = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
         data_time.update(time.time() - end)
+        lr = lr_schedule(epoch + (i+1)/len(train_loader))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
 
-        if configs.TRAIN.random_init: 
-            global_noise_data.uniform_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
-        for j in range(configs.ADV.n_repeats):
-            # update learning rate
-            lr = lr_schedule(epoch + (i*configs.ADV.n_repeats + j + 1)/len(train_loader))
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-
-            # Ascend on the global noise
-            noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=True)#.cuda()
-            in1 = input + noise_batch
+        # Adversarial example generation
+        adv_train = getattr(configs, 'adv_train', 'fast')
+        if adv_train == 'fast':
+            # Original fast adversarial training (global noise)
+            if configs.TRAIN.random_init: 
+                global_noise_data.uniform_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
+            for j in range(configs.ADV.n_repeats):
+                noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=True)
+                in1 = input + noise_batch
+                in1.clamp_(0, 1.0)
+                in1.sub_(mean).div_(std)
+                output = model(in1)
+                loss = criterion(output, target)
+                if half: 
+                    with amp.scale_loss(loss, optimizer) as scaled_loss: 
+                        scaled_loss.backward()
+                else:
+                    loss.backward()
+                pert = fgsm(noise_batch.grad, configs.ADV.fgsm_step)
+                global_noise_data[0:input.size(0)] += pert.data
+                global_noise_data.clamp_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
+                noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=False)
+                in1 = input + noise_batch
+                in1.clamp_(0, 1.0)
+                in1.sub_(mean).div_(std)
+                output = model(in1)
+                loss = criterion(output, target)
+                optimizer.zero_grad()
+                if half: 
+                    with amp.scale_loss(loss, optimizer) as scaled_loss: 
+                        scaled_loss.backward()
+                else: 
+                    loss.backward()
+                optimizer.step()
+                prec1, prec5 = accuracy(output, target, topk=(1, 5))
+                losses.update(loss.item(), input.size(0))
+                top1.update(prec1[0], input.size(0))
+                top5.update(prec5[0], input.size(0))
+        elif adv_train in ['fgsm_zero', 'fgsm_random']:
+            # FGSM with zero or random init
+            eps = configs.ADV.clip_eps
+            if adv_train == 'fgsm_zero':
+                delta = torch.zeros_like(input).cuda()
+            else:
+                delta = torch.empty_like(input).uniform_(-eps, eps).cuda()
+            delta.requires_grad = True
+            in1 = input + delta
             in1.clamp_(0, 1.0)
             in1.sub_(mean).div_(std)
             output = model(in1)
             loss = criterion(output, target)
-            if half: 
-                with amp.scale_loss(loss, optimizer) as scaled_loss: 
+            optimizer.zero_grad()
+            if half:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
                 loss.backward()
-            
-            # Update the noise for the next iteration
-            pert = fgsm(noise_batch.grad, configs.ADV.fgsm_step)
-            global_noise_data[0:input.size(0)] += pert.data
-            global_noise_data.clamp_(-configs.ADV.clip_eps, configs.ADV.clip_eps)
-
-            # Descend on global noise
-            noise_batch = Variable(global_noise_data[0:input.size(0)], requires_grad=False)#.cuda()
-            in1 = input + noise_batch
-            in1.clamp_(0, 1.0)
-            in1.sub_(mean).div_(std)
-            output = model(in1)
+            grad = delta.grad.detach()
+            delta = eps * torch.sign(grad)
+            adv_input = torch.clamp(input + delta, 0, 1)
+            adv_input.sub_(mean).div_(std)
+            output = model(adv_input)
             loss = criterion(output, target)
-
-            # compute gradient and do SGD step
             optimizer.zero_grad()
-            if half: 
-                with amp.scale_loss(loss, optimizer) as scaled_loss: 
+            if half:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
-            else: 
+            else:
                 loss.backward()
-
             optimizer.step()
-
             prec1, prec5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), input.size(0))
             top1.update(prec1[0], input.size(0))
             top5.update(prec5[0], input.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % configs.TRAIN.print_freq == 0:
-                print('Train Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                      'Loss {cls_loss.val:.4f} ({cls_loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
-                      'LR {lr:.3f}'.format(
-                       epoch, i, len(train_loader), batch_time=batch_time,
-                       data_time=data_time, top1=top1,
-                       top5=top5,cls_loss=losses, lr=lr))
-                sys.stdout.flush()
+        elif adv_train == 'pgd':
+            # PGD adversarial training
+            eps = configs.ADV.clip_eps
+            alpha = getattr(configs.ADV, 'pgd_alpha', eps/4)
+            steps = getattr(configs.ADV, 'pgd_steps', 7)
+            delta = torch.empty_like(input).uniform_(-eps, eps).cuda()
+            for _ in range(steps):
+                delta.requires_grad = True
+                in1 = torch.clamp(input + delta, 0, 1)
+                in1.sub_(mean).div_(std)
+                output = model(in1)
+                loss = criterion(output, target)
+                optimizer.zero_grad()
+                if half:
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
+                else:
+                    loss.backward()
+                grad = delta.grad.detach()
+                delta = delta + alpha * torch.sign(grad)
+                delta = torch.clamp(delta, -eps, eps)
+                delta = torch.clamp(input + delta, 0, 1) - input
+            adv_input = torch.clamp(input + delta, 0, 1)
+            adv_input.sub_(mean).div_(std)
+            output = model(adv_input)
+            loss = criterion(output, target)
+            optimizer.zero_grad()
+            if half:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+            optimizer.step()
+            prec1, prec5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec1[0], input.size(0))
+            top5.update(prec5[0], input.size(0))
+        else:
+            raise ValueError(f"Unknown adv_train style: {adv_train}")
+        batch_time.update(time.time() - end)
+        end = time.time()
+        if i % configs.TRAIN.print_freq == 0:
+            print('Train Epoch: [{0}][{1}/{2}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                  'Loss {cls_loss.val:.4f} ({cls_loss.avg:.4f})\t'
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
+                  'LR {lr:.3f}'.format(
+                   epoch, i, len(train_loader), batch_time=batch_time,
+                   data_time=data_time, top1=top1,
+                   top5=top5,cls_loss=losses, lr=lr))
+            sys.stdout.flush()
 
 if __name__ == '__main__':
     main()

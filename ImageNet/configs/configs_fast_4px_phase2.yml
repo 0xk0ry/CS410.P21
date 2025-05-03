@@ -46,11 +46,11 @@ TRAIN:
     random_init: true
     
 ADV:
-    # FGSM parameters during training
+    adv_train: fast
     clip_eps: 4.0
     fgsm_step: 5.0
-
-    # Number of repeats for free adversarial training
+    pgd_alpha: 1.6
+    pgd_steps: 7
     n_repeats: 1
 
     # PGD attack parameters used during validation
@@ -78,4 +78,3 @@ DATA:
     # Crop Size for data augmentation
     crop_size: 224
 
-    
