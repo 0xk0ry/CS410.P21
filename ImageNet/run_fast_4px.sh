@@ -1,8 +1,8 @@
-DATA160=~/imagenet-sz/160
-DATA352=~/imagenet-sz/352
-DATA=~/imagenet
+DATA160=/kaggle/input/tiny-imagenet-200-resized/160
+DATA352=/kaggle/input/tiny-imagenet-200-resized/352
+DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
-NAME=eps4
+NAME=esp4
 
 CONFIG1=configs/configs_fast_phase1_${NAME}.yml
 CONFIG2=configs/configs_fast_phase2_${NAME}.yml

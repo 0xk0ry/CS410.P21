@@ -1,12 +1,12 @@
-DATA160=~/imagenet-sz/160
-DATA352=~/imagenet-sz/352
-DATA=~/imagenet
+DATA160=/kaggle/input/tiny-imagenet-200-resized/160
+DATA352=/kaggle/input/tiny-imagenet-200-resized/352
+DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=pgd_2px
 
-CONFIG1=configs/configs_fast_2px_phase1.yml
-CONFIG2=configs/configs_fast_2px_phase2.yml
-CONFIG3=configs/configs_fast_2px_phase3.yml
+CONFIG1=configs/configs_fast_phase1_eps2.yml
+CONFIG2=configs/configs_fast_phase2_eps2.yml
+CONFIG3=configs/configs_fast_phase3_eps2.yml
 
 PREFIX1=pgd_phase1_${NAME}
 PREFIX2=pgd_phase2_${NAME}
@@ -16,8 +16,8 @@ OUT1=pgd_train_phase1_${NAME}.out
 OUT2=pgd_train_phase2_${NAME}.out
 OUT3=pgd_train_phase3_${NAME}.out
 
-END1=output/${PREFIX1}/checkpoint_epoch6.pth.tar
-END2=output/${PREFIX2}/checkpoint_epoch12.pth.tar
+END1=/kaggle/working/exp/ImageNet/${PREFIX1}/checkpoint_epoch6.pth.tar
+END2=/kaggle/working/exp/ImageNet/${PREFIX2}/checkpoint_epoch12.pth.tar
 
 # training for phase 1
 python -u main_fast.py $DATA160 -c $CONFIG1 --output_prefix $PREFIX1 --adv-train pgd | tee $OUT1

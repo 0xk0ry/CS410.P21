@@ -1,6 +1,6 @@
-DATA160=~/imagenet-sz/160
-DATA352=~/imagenet-sz/352
-DATA=~/imagenet
+DATA160=/kaggle/input/tiny-imagenet-200-resized/160
+DATA352=/kaggle/input/tiny-imagenet-200-resized/352
+DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=eps2
 
