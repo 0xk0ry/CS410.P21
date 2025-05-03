@@ -117,7 +117,7 @@ def main():
         print('%d \t %.1f \t \t %.4f \t %.4f \t %.4f' % (
             epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n))
     train_time = time.time()
-    torch.save(model.state_dict(), os.path.join(args.out_dir, f'train_free_output_{args.delta_init}.pth'))
+    torch.save(model.state_dict(), os.path.join(args.out_dir, f'train_free_output.pth'))
     logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
     print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
 
