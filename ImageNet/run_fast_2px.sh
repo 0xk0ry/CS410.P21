@@ -12,9 +12,9 @@ PREFIX1=fast_adv_phase1_${NAME}
 PREFIX2=fast_adv_phase2_${NAME}
 PREFIX3=fast_adv_phase3_${NAME}
 
-OUT1=fast_train_phase1_${NAME}.out
-OUT2=fast_train_phase2_${NAME}.out
-OUT3=fast_train_phase3_${NAME}.out
+OUT1=/kaggle/working/exp/ImageNet/fast_train_phase1_${NAME}.out
+OUT2=/kaggle/working/exp/ImageNet/fast_train_phase2_${NAME}.out
+OUT3=/kaggle/working/exp/ImageNet/fast_train_phase3_${NAME}.out
 
 EVAL1=fast_eval_phase1_${NAME}.out
 EVAL2=fast_eval_phase2_${NAME}.out

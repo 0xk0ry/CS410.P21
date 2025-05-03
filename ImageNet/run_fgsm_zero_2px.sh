@@ -12,9 +12,9 @@ PREFIX1=fgsm_zero_phase1_${NAME}
 PREFIX2=fgsm_zero_phase2_${NAME}
 PREFIX3=fgsm_zero_phase3_${NAME}
 
-OUT1=fgsm_zero_train_phase1_${NAME}.out
-OUT2=fgsm_zero_train_phase2_${NAME}.out
-OUT3=fgsm_zero_train_phase3_${NAME}.out
+OUT1=/kaggle/working/exp/ImageNet/fgsm_zero_train_phase1_${NAME}.out
+OUT2=/kaggle/working/exp/ImageNet/fgsm_zero_train_phase2_${NAME}.out
+OUT3=/kaggle/working/exp/ImageNet/fgsm_zero_train_phase3_${NAME}.out
 
 END1=/kaggle/working/exp/ImageNet/${PREFIX1}/checkpoint_epoch6.pth.tar
 END2=/kaggle/working/exp/ImageNet/${PREFIX2}/checkpoint_epoch12.pth.tar
