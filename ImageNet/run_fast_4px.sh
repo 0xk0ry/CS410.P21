@@ -20,9 +20,9 @@ EVAL1=fast_eval_phase1_${NAME}.out
 EVAL2=fast_eval_phase2_${NAME}.out
 EVAL3=fast_eval_phase3_${NAME}.out
 
-END1=~/FastAdversarialTraining/trained_models/fast_adv_phase1_${NAME}_step5_eps4_repeat1/checkpoint_epoch6.pth.tar
-END2=~/FastAdversarialTraining/trained_models/fast_adv_phase2_${NAME}_step5_eps4_repeat1/checkpoint_epoch12.pth.tar
-END3=~/FastAdversarialTraining/trained_models/fast_adv_phase3_${NAME}_step5_eps4_repeat1/checkpoint_epoch15.pth.tar
+END1=/kaggle/working/exp/ImageNet/fast_adv_phase1_${NAME}_step5_eps4_repeat1/checkpoint_epoch6.pth.tar
+END2=/kaggle/working/exp/ImageNet/fast_adv_phase2_${NAME}_step5_eps4_repeat1/checkpoint_epoch12.pth.tar
+END3=/kaggle/working/exp/ImageNet/fast_adv_phase3_${NAME}_step5_eps4_repeat1/checkpoint_epoch15.pth.tar
 
 # training for phase 1
 python -u main_fast.py $DATA160 -c $CONFIG1 --output_prefix $PREFIX1 | tee $OUT1
