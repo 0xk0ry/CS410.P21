@@ -14,8 +14,8 @@ TRAIN:
     print_freq: 10
 
     # Dataset mean and std used for data normalization
-    mean: !!python/tuple [0.485, 0.456, 0.406]
-    std: !!python/tuple [0.229, 0.224, 0.225]
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
 
     # FAST ADVERSARIAL TRAINING PARAMETER
 

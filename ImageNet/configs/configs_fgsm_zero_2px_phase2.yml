@@ -4,12 +4,12 @@ TRAIN:
     momentum: 0.9
     weight_decay: 0.0005
     print_freq: 10
-    mean: !!python/tuple [0.485, 0.456, 0.406]
-    std: !!python/tuple [0.229, 0.224, 0.225]
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
     start_epoch: 0
     epochs: 12
     lr_epochs: !!python/tuple [0,1,12]
-    lr_values: !!python/tuple [0,0.4,0.04]
+    lr_values: [0,0.4,0.04]
     half: true
     random_init: false
 ADV:
