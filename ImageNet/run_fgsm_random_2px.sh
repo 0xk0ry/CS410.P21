@@ -4,9 +4,9 @@ DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=fgsm_random_2px
 
-CONFIG1=configs/configs_fast_phase1_eps2.yml
-CONFIG2=configs/configs_fast_phase2_eps2.yml
-CONFIG3=configs/configs_fast_phase3_eps2.yml
+CONFIG1=configs/configs_fgsm_random_2px_phase1.yml
+CONFIG2=configs/configs_fgsm_random_2px_phase2.yml
+CONFIG3=configs/configs_fgsm_random_2px_phase3.yml
 
 PREFIX1=fgsm_random_phase1_${NAME}
 PREFIX2=fgsm_random_phase2_${NAME}

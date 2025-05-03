@@ -34,7 +34,7 @@ def get_args():
     parser.add_argument('--out-dir', default='train_fgsm_output', type=str, help='Output directory')
     parser.add_argument('--seed', default=0, type=int, help='Random seed')
     parser.add_argument('--early-stop', action='store_true', help='Early stop if overfitting occurs')
-    parser.add_argument('--opt-level', default='O2', type=str, choices=['O0', 'O1', 'O2'],
+    parser.add_argument('--opt-level', default='O1', type=str, choices=['O0', 'O1', 'O2'],
         help='O0 is FP32 training, O1 is Mixed Precision, and O2 is "Almost FP16" Mixed Precision')
     parser.add_argument('--loss-scale', default='1.0', type=str, choices=['1.0', 'dynamic'],
         help='If loss_scale is "dynamic", adaptively adjust the loss scale over time')

@@ -1,0 +1,30 @@
+TRAIN:
+    arch: 'resnet50'
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 0.0005
+    print_freq: 10
+    mean: !!python/tuple [0.485, 0.456, 0.406]
+    std: !!python/tuple [0.229, 0.224, 0.225]
+    start_epoch: 0
+    epochs: 6
+    lr_epochs: !!python/tuple [0,1,6]
+    lr_values: !!python/tuple [0,0.4,0.04]
+    half: true
+    random_init: false
+ADV:
+    adv_train: fgsm_zero
+    clip_eps: 4.0
+    fgsm_step: 5.0
+    pgd_alpha: 1.6
+    pgd_steps: 7
+    n_repeats: 1
+    pgd_attack: 
+    - !!python/tuple [10, 0.00784313725]
+    - !!python/tuple [50, 0.00784313725]
+DATA:
+    workers: 16
+    max_color_value: 255.0
+    img_size: 0
+    batch_size: 512
+    crop_size: 128

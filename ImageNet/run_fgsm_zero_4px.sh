@@ -4,9 +4,9 @@ DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=fgsm_zero_4px
 
-CONFIG1=configs/configs_fast_phase1_eps4.yml
-CONFIG2=configs/configs_fast_phase2_eps4.yml
-CONFIG3=configs/configs_fast_phase3_eps4.yml
+CONFIG1=configs/configs_fgsm_zero_4px_phase1.yml
+CONFIG2=configs/configs_fgsm_zero_4px_phase2.yml
+CONFIG3=configs/configs_fgsm_zero_4px_phase3.yml
 
 PREFIX1=fgsm_zero_phase1_${NAME}
 PREFIX2=fgsm_zero_phase2_${NAME}

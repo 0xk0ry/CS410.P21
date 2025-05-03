@@ -4,9 +4,9 @@ DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=esp4
 
-CONFIG1=configs/configs_fast_phase1_${NAME}.yml
-CONFIG2=configs/configs_fast_phase2_${NAME}.yml
-CONFIG3=configs/configs_fast_phase3_${NAME}.yml
+CONFIG1=configs/configs_fast_4px_phase1.yml
+CONFIG2=configs/configs_fast_4px_phase2.yml
+CONFIG3=configs/configs_fast_4px_phase3.yml
 
 PREFIX1=fast_adv_phase1_${NAME}
 PREFIX2=fast_adv_phase2_${NAME}
