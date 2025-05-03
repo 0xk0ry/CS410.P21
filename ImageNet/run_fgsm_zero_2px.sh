@@ -20,10 +20,10 @@ END1=/kaggle/working/exp/ImageNet/${PREFIX1}/checkpoint_epoch6.pth.tar
 END2=/kaggle/working/exp/ImageNet/${PREFIX2}/checkpoint_epoch12.pth.tar
 
 # training for phase 1
-python -u main_fast.py $DATA160 -c $CONFIG1 --output_prefix $PREFIX1 --adv-train fgsm_zero | tee $OUT1
+python -u /kaggle/working/CS410.P21/ImageNet/main_fast.py $DATA160 -c $CONFIG1 --output_prefix $PREFIX1 --adv-train fgsm_zero | tee $OUT1
 
 # training for phase 2
-python -u main_fast.py $DATA352 -c $CONFIG2 --output_prefix $PREFIX2 --resume $END1 --adv-train fgsm_zero | tee $OUT2
+python -u /kaggle/working/CS410.P21/ImageNet/main_fast.py $DATA352 -c $CONFIG2 --output_prefix $PREFIX2 --resume $END1 --adv-train fgsm_zero | tee $OUT2
 
 # training for phase 3
-python -u main_fast.py $DATA -c $CONFIG3 --output_prefix $PREFIX3 --resume $END2 --adv-train fgsm_zero | tee $OUT3
+python -u /kaggle/working/CS410.P21/ImageNet/main_fast.py $DATA -c $CONFIG3 --output_prefix $PREFIX3 --resume $END2 --adv-train fgsm_zero | tee $OUT3
