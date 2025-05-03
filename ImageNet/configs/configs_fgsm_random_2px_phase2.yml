@@ -8,7 +8,7 @@ TRAIN:
     std: [0.229, 0.224, 0.225]
     start_epoch: 0
     epochs: 12
-    lr_epochs: !!python/tuple [0,1,12]
+    lr_epochs: [0,1,12]
     lr_values: [0,0.4,0.04]
     half: true
     random_init: true
@@ -20,8 +20,8 @@ ADV:
     pgd_steps: 7
     n_repeats: 1
     pgd_attack: 
-    - !!python/tuple [10, 0.00392156862]
-    - !!python/tuple [50, 0.00392156862]
+    - [10, 0.00392156862]
+    - [50, 0.00392156862]
 DATA:
     workers: 16
     max_color_value: 255.0

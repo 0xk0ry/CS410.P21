@@ -24,23 +24,23 @@ TRAIN:
     # # Number of training epochs
     # epochs: 24
 
-    # lr_epochs: !!python/tuple [12,22,25]
-    # lr_values: !!python/tuple [0.4375,0.04375,0.004375]
+    # lr_epochs: [12,22,25]
+    # lr_values: [0.4375,0.04375,0.004375]
 
     # Starting epoch (interpret as multiplied by n_repeats)
     start_epoch: 6
     # Number of training epochs
     epochs: 12
 
-    lr_epochs: !!python/tuple [6,12]
-    lr_values: !!python/tuple [0.04,0.004]
+    lr_epochs: [6,12]
+    lr_values: [0.04,0.004]
 
-    # lr_epochs: !!python/tuple [6,7,12]
-    # lr_values: !!python/tuple [0,0.1,0.01]
+    # lr_epochs: [6,7,12]
+    # lr_values: [0,0.1,0.01]
 
     # epochs: 18
-    # lr_epochs: !!python/tuple [6,12,16,18]
-    # lr_values: !!python/tuple [0.1,0.01,0.001,0]
+    # lr_epochs: [6,12,16,18]
+    # lr_values: [0.1,0.01,0.001,0]
 
     half: true
     random_init: true
@@ -53,8 +53,8 @@ ADV:
     pgd_steps: 7
     n_repeats: 1
     pgd_attack: 
-    - !!python/tuple [10, 0.00392156862] #[10 iters, 1.0/255.0]
-    - !!python/tuple [50, 0.00392156862] #[50 iters, 1.0/255.0]
+    - [10, 0.00392156862] #[10 iters, 1.0/255.0]
+    - [50, 0.00392156862] #[50 iters, 1.0/255.0]
     
 DATA:
     # Number of data workers
