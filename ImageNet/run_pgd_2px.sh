@@ -4,9 +4,9 @@ DATA=/kaggle/input/tiny-imagenet-200-resized/original
 
 NAME=pgd_2px
 
-CONFIG1=configs/configs_pgd_2px_phase1.yml
-CONFIG2=configs/configs_pgd_2px_phase2.yml
-CONFIG3=configs/configs_pgd_2px_phase3.yml
+CONFIG1=/kaggle/working/CS410.P21/ImageNet/configs/configs_pgd_2px_phase1.yml
+CONFIG2=/kaggle/working/CS410.P21/ImageNet/configs/configs_pgd_2px_phase2.yml
+CONFIG3=/kaggle/working/CS410.P21/ImageNet/configs/configs_pgd_2px_phase3.yml
 
 PREFIX1=pgd_phase1_${NAME}
 PREFIX2=pgd_phase2_${NAME}
