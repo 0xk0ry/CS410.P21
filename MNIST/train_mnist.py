@@ -120,6 +120,10 @@ def main():
                     opt.zero_grad()
                     loss.backward()
                     opt.step()
+                    # accumulate metrics for each replay
+                    train_loss += loss.item() * y.size(0)
+                    train_acc += (output.max(1)[1] == y).sum().item()
+                    train_n += y.size(0)
                 continue  # skip the rest of the loop for free
             else:
                 raise ValueError('Unknown attack')
