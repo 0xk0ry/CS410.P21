@@ -48,7 +48,7 @@ def main():
     model = mnist_net().cuda()
     model.train()
 
-    opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=0.9, weight_decay=5e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr_max)
     if args.lr_type == 'cyclic': 
         lr_schedule = lambda t: np.interp([t], [0, args.epochs * 2//5, args.epochs], [0, args.lr_max, 0])[0]
     elif args.lr_type == 'flat': 
