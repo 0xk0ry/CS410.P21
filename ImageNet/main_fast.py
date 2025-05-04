@@ -282,6 +282,7 @@ def train(train_loader, model, criterion, optimizer, epoch, lr_schedule, half=Fa
             steps = getattr(configs.ADV, 'pgd_steps', 7)
             delta = torch.empty_like(input).uniform_(-eps, eps).cuda()
             for _ in range(steps):
+                delta = delta.detach()
                 delta.requires_grad = True
                 in1 = torch.clamp(input + delta, 0, 1)
                 in1.sub_(mean).div_(std)
