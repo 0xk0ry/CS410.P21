@@ -12,7 +12,7 @@ from apex import amp
 
 from preact_resnet import PreActResNet18
 from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
-    attack_pgd, evaluate_pgd, evaluate_standard)
+    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm)
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +162,11 @@ def main():
     pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
 
-    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
-    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
-    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc)
-    print('%.4f \t \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc))
+    fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
+    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
+    print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
 
 
 if __name__ == "__main__":

@@ -118,3 +118,27 @@ def evaluate_standard(test_loader, model):
             test_acc += (output.max(1)[1] == y).sum().item()
             n += y.size(0)
     return test_loss/n, test_acc/n
+
+def evaluate_fgsm(test_loader, model):
+    epsilon = (8 / 255.) / std
+    fgsm_loss = 0
+    fgsm_acc = 0
+    n = 0
+    model.eval()
+    for i, (X, y) in enumerate(test_loader):
+        X, y = X.cuda(), y.cuda()
+        delta = torch.zeros_like(X, requires_grad=True)
+        output = model(X + delta)
+        loss = F.cross_entropy(output, y)
+        loss.backward()
+        grad = delta.grad.detach()
+        # Broadcast epsilon to match channel shape if needed
+        delta.data = clamp(epsilon * torch.sign(grad), -epsilon, epsilon)
+        delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+        with torch.no_grad():
+            output = model(X + delta)
+            loss = F.cross_entropy(output, y)
+            fgsm_loss += loss.item() * y.size(0)
+            fgsm_acc += (output.max(1)[1] == y).sum().item()
+            n += y.size(0)
+    return fgsm_loss/n, fgsm_acc/n
