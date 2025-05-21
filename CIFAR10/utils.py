@@ -6,7 +6,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import os
-from contextlib import nullcontext
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2471, 0.2435, 0.2616)
@@ -66,16 +65,11 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, sc
         delta.requires_grad = True
         for _ in range(attack_iters):
             delta.requires_grad = True
-            with torch.amp.autocast('cuda') if scaler is not None else nullcontext():
-                output = model(X + delta)
-                index = torch.where(output.max(1)[1] == y)
-                if len(index[0]) == 0:
-                    break
-                loss = F.cross_entropy(output, y)
+            output = model(X + delta)
+            index = torch.where(output.max(1)[1] == y)
             if len(index[0]) == 0:
-                continue
-            if delta.grad is not None:
-                delta.grad.zero_()
+                break
+            loss = F.cross_entropy(output, y)
             if opt is not None and scaler is not None:
                 scaler.scale(loss).backward()
             else:
