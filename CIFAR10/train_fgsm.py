@@ -110,7 +110,7 @@ def main():
                     delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
             delta.requires_grad = True
-            with torch.amp.autocast(device_type='cuda'):
+            with torch.amp.autocast('cuda'):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
             scaler.scale(loss).backward()
@@ -118,7 +118,7 @@ def main():
             delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
             delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
             delta = delta.detach()
-            with torch.amp.autocast(device_type='cuda'):
+            with torch.amp.autocast('cuda'):
                 output = model(X + delta[:X.size(0)])
                 loss = criterion(output, y)
             opt.zero_grad()

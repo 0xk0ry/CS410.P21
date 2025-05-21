@@ -95,7 +95,7 @@ def main():
         for i, (X, y) in enumerate(train_loader):
             X, y = X.cuda(), y.cuda()
             for _ in range(args.minibatch_replays):
-                with torch.amp.autocast(device_type='cuda'):
+                with torch.amp.autocast('cuda'):
                     output = model(X + delta[:X.size(0)])
                     loss = criterion(output, y)
                 opt.zero_grad()
