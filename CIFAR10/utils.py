@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import os
+from contextlib import nullcontext
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2471, 0.2435, 0.2616)
@@ -64,7 +65,7 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, sc
         delta.data = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
-            with torch.cuda.amp.autocast() if scaler is not None else torch.no_grad():
+            with torch.cuda.amp.autocast() if scaler is not None else nullcontext():
                 output = model(X + delta)
                 index = torch.where(output.max(1)[1] == y)
                 if len(index[0]) == 0:
@@ -130,8 +131,9 @@ def evaluate_fgsm(test_loader, model):
     for i, (X, y) in enumerate(test_loader):
         X, y = X.cuda(), y.cuda()
         delta = torch.zeros_like(X, requires_grad=True)
-        output = model(X + delta)
-        loss = F.cross_entropy(output, y)
+        with nullcontext():
+            output = model(X + delta)
+            loss = F.cross_entropy(output, y)
         loss.backward()
         grad = delta.grad.detach()
         # Broadcast epsilon to match channel shape if needed
