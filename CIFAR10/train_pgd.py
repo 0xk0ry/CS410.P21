@@ -73,7 +73,7 @@ def main():
 
     opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     lr_steps = args.epochs * len(train_loader)
     if args.lr_schedule == 'cyclic':

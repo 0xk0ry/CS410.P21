@@ -68,7 +68,7 @@ def main():
 
     opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
     delta.requires_grad = True
