@@ -145,6 +145,22 @@ def main():
             'pgd_acc': pgd_acc,
             'fgsm_acc': fgsm_acc
         })
+        # Save checkpoint every 5 epochs
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+            checkpoint_path = os.path.join(args.out_dir, f'checkpoint_fgsm_{args.delta_init}_epoch_{epoch+1}.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': train_loss/train_n,
+                'train_acc': train_acc/train_n,
+                'test_acc': test_acc,
+                'pgd_acc': pgd_acc,
+                'fgsm_acc': fgsm_acc,
+                'robust_acc': robust_acc if args.early_stop else None
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved at epoch {epoch+1} to {checkpoint_path}')
         if args.early_stop:
             # Check current PGD robustness of model using random minibatch
             X, y = first_batch

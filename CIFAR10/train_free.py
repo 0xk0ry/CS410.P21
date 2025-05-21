@@ -125,6 +125,24 @@ def main():
             'pgd_acc': pgd_acc,
             'fgsm_acc': fgsm_acc
         })
+        
+        # Save checkpoint every 5 epochs
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+            checkpoint_path = os.path.join(args.out_dir, f'checkpoint_free_epoch_{epoch+1}.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'delta': delta.detach(), # Save the perturbation for free training
+                'train_loss': train_loss/train_n,
+                'train_acc': train_acc/train_n,
+                'test_acc': test_acc,
+                'pgd_acc': pgd_acc,
+                'fgsm_acc': fgsm_acc
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved at epoch {epoch+1} to {checkpoint_path}')
+        
         epoch_time = time.time()
         lr = scheduler.get_lr()[0]
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',

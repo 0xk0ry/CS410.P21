@@ -180,6 +180,22 @@ def main():
             'fgsm_acc': fgsm_acc
         })
 
+        # Save checkpoint every 5 epochs
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+            checkpoint_path = os.path.join(args.out_dir, f'checkpoint_{args.fname}_epoch_{epoch+1}.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'attack': args.attack,
+                'train_loss': train_loss/train_n,
+                'train_acc': train_acc/train_n,
+                'test_acc': test_acc,
+                'pgd_acc': pgd_acc,
+                'fgsm_acc': fgsm_acc
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved at epoch {epoch+1} to {checkpoint_path}')
+            
         train_time = time.time()
         logger.info('%d \t %.1f \t %.4f \t %.4f \t %.4f',
             epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n)
