@@ -3,7 +3,6 @@ import logging
 import os
 import time
 
-import apex.amp as amp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -68,11 +67,8 @@ def main():
     model.train()
 
     opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
-    amp_args = dict(opt_level=args.opt_level, loss_scale=args.loss_scale, verbosity=False)
-    if args.opt_level == 'O2':
-        amp_args['master_weights'] = args.master_weights
-    model, opt = amp.initialize(model, opt, **amp_args)
     criterion = nn.CrossEntropyLoss()
+    scaler = torch.cuda.amp.GradScaler()
 
     delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
     delta.requires_grad = True
@@ -96,15 +92,16 @@ def main():
         for i, (X, y) in enumerate(train_loader):
             X, y = X.cuda(), y.cuda()
             for _ in range(args.minibatch_replays):
-                output = model(X + delta[:X.size(0)])
-                loss = criterion(output, y)
+                with torch.cuda.amp.autocast():
+                    output = model(X + delta[:X.size(0)])
+                    loss = criterion(output, y)
                 opt.zero_grad()
-                with amp.scale_loss(loss, opt) as scaled_loss:
-                    scaled_loss.backward()
+                scaler.scale(loss).backward()
                 grad = delta.grad.detach()
                 delta.data = clamp(delta + epsilon * torch.sign(grad), -epsilon, epsilon)
                 delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
-                opt.step()
+                scaler.step(opt)
+                scaler.update()
                 delta.grad.zero_()
                 scheduler.step()
             train_loss += loss.item() * y.size(0)

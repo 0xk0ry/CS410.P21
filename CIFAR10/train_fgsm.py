@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from apex import amp
 
 from preact_resnet import PreActResNet18
 from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
@@ -74,11 +73,8 @@ def main():
     model.train()
 
     opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
-    amp_args = dict(opt_level=args.opt_level, loss_scale=args.loss_scale, verbosity=False)
-    if args.opt_level == 'O2':
-        amp_args['master_weights'] = args.master_weights
-    model, opt = amp.initialize(model, opt, **amp_args)
     criterion = nn.CrossEntropyLoss()
+    scaler = torch.cuda.amp.GradScaler()
 
     if args.delta_init == 'previous':
         delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
@@ -111,20 +107,21 @@ def main():
                     delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
             delta.requires_grad = True
-            output = model(X + delta[:X.size(0)])
-            loss = F.cross_entropy(output, y)
-            with amp.scale_loss(loss, opt) as scaled_loss:
-                scaled_loss.backward()
+            with torch.cuda.amp.autocast():
+                output = model(X + delta[:X.size(0)])
+                loss = F.cross_entropy(output, y)
+            scaler.scale(loss).backward()
             grad = delta.grad.detach()
             delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
             delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
             delta = delta.detach()
-            output = model(X + delta[:X.size(0)])
-            loss = criterion(output, y)
+            with torch.cuda.amp.autocast():
+                output = model(X + delta[:X.size(0)])
+                loss = criterion(output, y)
             opt.zero_grad()
-            with amp.scale_loss(loss, opt) as scaled_loss:
-                scaled_loss.backward()
-            opt.step()
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
             train_loss += loss.item() * y.size(0)
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
