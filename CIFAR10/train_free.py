@@ -111,10 +111,10 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
         # Evaluate on test set and adversarial after each epoch
-        with torch.no_grad():
-            test_loss, test_acc = evaluate_standard(test_loader, model)
-            pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
-            fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
+        test_loss, test_acc = evaluate_standard(test_loader, model)
+        pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
+        fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
+        lr = scheduler.get_lr()[0]
         # Log metrics to CSV
         log_metrics(csv_logfile, fieldnames, {
             'epoch': epoch,
