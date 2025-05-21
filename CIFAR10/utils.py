@@ -1,4 +1,3 @@
-import apex.amp as amp
 import torch
 import torch.nn.functional as F
 from torchvision import datasets, transforms
@@ -52,7 +51,7 @@ def get_loaders(dir_, batch_size):
     return train_loader, test_loader
 
 
-def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
+def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, scaler=None):
     max_loss = torch.zeros(y.shape[0]).cuda()
     max_delta = torch.zeros_like(X).cuda()
     for zz in range(restarts):
@@ -62,14 +61,14 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
         delta.data = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
-            output = model(X + delta)
-            index = torch.where(output.max(1)[1] == y)
-            if len(index[0]) == 0:
-                break
-            loss = F.cross_entropy(output, y)
-            if opt is not None:
-                with amp.scale_loss(loss, opt) as scaled_loss:
-                    scaled_loss.backward()
+            with torch.cuda.amp.autocast() if scaler is not None else torch.no_grad():
+                output = model(X + delta)
+                index = torch.where(output.max(1)[1] == y)
+                if len(index[0]) == 0:
+                    break
+                loss = F.cross_entropy(output, y)
+            if opt is not None and scaler is not None:
+                scaler.scale(loss).backward()
             else:
                 loss.backward()
             grad = delta.grad.detach()
