@@ -9,6 +9,9 @@ import torchvision
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from mnist_net import mnist_net
+import os
+import csv
+from utils import evaluate_standard, evaluate_pgd, evaluate_fgsm, log_metrics, plot_metrics
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -28,9 +31,10 @@ def get_args():
     parser.add_argument('--free-replays', default=8, type=int)
     parser.add_argument('--lr-max', default=5e-3, type=float)
     parser.add_argument('--lr-type', default='flat', type=str, choices=['cyclic', 'flat'])
-    parser.add_argument('--fname', default='mnist_model.pth', type=str)
+    parser.add_argument('--fname', default='mnist_model', type=str)
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--zero-init', action='store_true', help='Use zero initialization for FGSM (no random start)')
+    parser.add_argument('--out-dir', default='train_mnist_output', type=str, help='Output directory for logs and plots')
     return parser.parse_args()
 
 def main():
@@ -38,12 +42,32 @@ def main():
     logger.info(args)
     print(args)
 
+    # Create output directory if it doesn't exist
+    if not os.path.exists(args.out_dir):
+        os.makedirs(args.out_dir)
+    logfile = os.path.join(args.out_dir, f'train_{args.fname}_output.log')
+    if os.path.exists(logfile):
+        os.remove(logfile)
+
+    # Configure logging to file
+    file_handler = logging.FileHandler(logfile)
+    file_handler.setFormatter(logging.Formatter('[%(asctime)s] - %(message)s', datefmt='%Y/%m/%d %H:%M:%S'))
+    logger.addHandler(file_handler)
+    
+    # Set up CSV file for metrics
+    csv_logfile = os.path.join(args.out_dir, f'train_{args.attack}_metrics.csv')
+    fieldnames = ['epoch', 'lr', 'train_loss', 'train_acc', 'test_acc', 'pgd_acc', 'fgsm_acc']
+
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
 
     mnist_train = datasets.MNIST(args.data_dir, train=True, download=True, transform=transforms.ToTensor())
     train_loader = torch.utils.data.DataLoader(mnist_train, batch_size=args.batch_size, shuffle=True)
+    
+    # Add test dataset for evaluation
+    mnist_test = datasets.MNIST(args.data_dir, train=False, download=True, transform=transforms.ToTensor())
+    test_loader = torch.utils.data.DataLoader(mnist_test, batch_size=args.batch_size, shuffle=False)
 
     model = mnist_net().cuda()
     model.train()
@@ -58,6 +82,8 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
 
+    # Training
+    start_train_time = time.time()
     logger.info('Epoch \t Time \t LR \t \t Train Loss \t Train Acc')
     print('Epoch \t Time \t LR \t \t Train Loss \t Train Acc')
     for epoch in range(args.epochs):
@@ -138,12 +164,50 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
 
+        # Evaluate on test set and adversarial test examples after each epoch
+        test_loss, test_acc = evaluate_standard(test_loader, model)
+        pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
+        fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
+        
+        # Log metrics to CSV
+        log_metrics(csv_logfile, fieldnames, {
+            'epoch': epoch,
+            'lr': lr,
+            'train_loss': train_loss/train_n,
+            'train_acc': train_acc/train_n,
+            'test_acc': test_acc,
+            'pgd_acc': pgd_acc,
+            'fgsm_acc': fgsm_acc
+        })
+
         train_time = time.time()
         logger.info('%d \t %.1f \t %.4f \t %.4f \t %.4f',
             epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n)
         print('%d \t %.1f \t %.4f \t %.4f \t %.4f' % (
             epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n))
-        torch.save(model.state_dict(), args.fname)
+        torch.save(model.state_dict(), os.path.join(args.out_dir, args.fname+'.pth'))
+    
+    # Total training time
+    train_time = time.time()
+    logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
+    print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
+    
+    # Plot all metrics at the end
+    plot_metrics(csv_logfile, args.out_dir)
+
+    # Final Evaluation
+    model_test = mnist_net().cuda()
+    model_test.load_state_dict(model.state_dict())
+    model_test.eval()
+
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
+    test_loss, test_acc = evaluate_standard(test_loader, model_test)
+    fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
+
+    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
+    print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
 
 if __name__ == "__main__":
     main()
