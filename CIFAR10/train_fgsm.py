@@ -135,7 +135,7 @@ def main():
         pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
         fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
         # Log metrics to CSV
-        lr = scheduler.get_lr()[0]
+        lr = scheduler.get_last_lr()
         log_metrics(csv_logfile, fieldnames, {
             'epoch': epoch,
             'lr': lr,
@@ -175,7 +175,7 @@ def main():
     model_test.float()
     model_test.eval()
 
-    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 10, 1)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
 
     fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
