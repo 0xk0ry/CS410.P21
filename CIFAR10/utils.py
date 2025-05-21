@@ -65,6 +65,7 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, sc
         delta.data = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
+            delta.requires_grad = True
             with torch.amp.autocast('cuda') if scaler is not None else nullcontext():
                 output = model(X + delta)
                 index = torch.where(output.max(1)[1] == y)

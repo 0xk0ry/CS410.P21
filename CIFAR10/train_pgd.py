@@ -103,7 +103,7 @@ def main():
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
             delta.requires_grad = True
             for _ in range(args.attack_iters):
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast(device_type='cuda'):
                     output = model(X + delta)
                     loss = criterion(output, y)
                 scaler.scale(loss).backward()
@@ -112,7 +112,7 @@ def main():
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
                 delta.grad.zero_()
             delta = delta.detach()
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast(device_type='cuda'):
                 output = model(X + delta)
                 loss = criterion(output, y)
             opt.zero_grad()
