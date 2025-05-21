@@ -114,7 +114,7 @@ def main():
         test_loss, test_acc = evaluate_standard(test_loader, model)
         pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
         fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
-        lr = scheduler.get_lr()[0]
+        lr = scheduler.get_last_lr()
         # Log metrics to CSV
         log_metrics(csv_logfile, fieldnames, {
             'epoch': epoch,
@@ -126,7 +126,7 @@ def main():
             'fgsm_acc': fgsm_acc
         })
         epoch_time = time.time()
-        lr = scheduler.get_lr()[0]
+        lr = scheduler.get_last_lr()
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
             epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n)
         print('%d \t %.1f \t \t %.4f \t %.4f \t %.4f' % (
