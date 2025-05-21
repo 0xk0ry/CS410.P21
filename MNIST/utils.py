@@ -6,22 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import os
-from contextlib import nullcontext
-
-# CIFAR10 stats
-cifar10_mean = (0.4914, 0.4822, 0.4465)
-cifar10_std = (0.2471, 0.2435, 0.2616)
 
 # MNIST stats - grayscale image normalization
 mnist_mean = (0.1307,)
 mnist_std = (0.3081,)
-
-# For CIFAR10
-mu = torch.tensor(cifar10_mean).view(3,1,1).cuda()
-std = torch.tensor(cifar10_std).view(3,1,1).cuda()
-
-upper_limit = ((1 - mu)/ std)
-lower_limit = ((0 - mu)/ std)
 
 # For MNIST, we use simpler bounds of [0,1] since we don't normalize
 
@@ -33,77 +21,29 @@ def clamp(X, lower_limit, upper_limit):
     """
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
-
-def get_loaders(dir_, batch_size):
-    train_transform = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(cifar10_mean, cifar10_std),
-    ])
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(cifar10_mean, cifar10_std),
-    ])
-    num_workers = 2
-    train_dataset = datasets.CIFAR10(
-        dir_, train=True, transform=train_transform, download=True)
-    test_dataset = datasets.CIFAR10(
-        dir_, train=False, transform=test_transform, download=True)
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=num_workers,
-    )
-    test_loader = torch.utils.data.DataLoader(
-        dataset=test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        pin_memory=True,
-        num_workers=2,
-    )
-    return train_loader, test_loader
-
-
 def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, scaler=None):
+    """
+    PGD attack optimized for MNIST as per evaluate_mnist.py
+    """
     max_loss = torch.zeros(y.shape[0]).cuda()
     max_delta = torch.zeros_like(X).cuda()
-    for zz in range(restarts):
-        delta = torch.zeros_like(X).cuda()
-        # Handle both MNIST (1 channel) and CIFAR10 (3 channels)
-        if X.shape[1] == 1:  # MNIST
-            delta.uniform_(-epsilon, epsilon)
-        else:  # CIFAR10 or other multi-channel images
-            for i in range(len(epsilon)):
-                delta[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
-        delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+    for _ in range(restarts):
+        delta = torch.zeros_like(X).uniform_(-epsilon, epsilon).cuda()
+        delta.data = clamp(delta, 0-X, 1-X)
         delta.requires_grad = True
         for _ in range(attack_iters):
-            delta.requires_grad = True
-            with torch.amp.autocast('cuda') if scaler is not None else nullcontext():
-                output = model(X + delta)
-                index = torch.where(output.max(1)[1] == y)
-                if len(index[0]) == 0:
-                    break
-                loss = F.cross_entropy(output, y)
-            if len(index[0]) == 0:
-                continue
-            if delta.grad is not None:
-                delta.grad.zero_()
-            if opt is not None and scaler is not None:
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            output = model(X + delta)
+            index = torch.where(output.max(1)[1] == y)[0]
+            if len(index) == 0:
+                break
+            loss = F.cross_entropy(output, y)
+            loss.backward()
             grad = delta.grad.detach()
-            d = delta[index[0], :, :, :]
-            g = grad[index[0], :, :, :]
-            d = clamp(d + alpha * torch.sign(g), -epsilon, epsilon)
-            d = clamp(d, lower_limit - X[index[0], :, :, :], upper_limit - X[index[0], :, :, :])
-            delta.data[index[0], :, :, :] = d
-            delta = delta.detach()
-        all_loss = F.cross_entropy(model(X+delta), y, reduction='none').detach()
+            d = torch.clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            d = clamp(d, 0-X, 1-X)
+            delta.data[index] = d[index]
+            delta.grad.zero_()
+        all_loss = F.cross_entropy(model(X+delta), y, reduction='none')
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
@@ -144,6 +84,18 @@ def evaluate_standard(test_loader, model):
             n += y.size(0)
     return test_loss/n, test_acc/n
 
+def attack_fgsm(model, X, y, epsilon):
+    """
+    FGSM attack implementation for MNIST as per evaluate_mnist.py
+    """
+    delta = torch.zeros_like(X, requires_grad=True)
+    output = model(X + delta)
+    loss = F.cross_entropy(output, y)
+    loss.backward()
+    grad = delta.grad.detach()
+    delta.data = epsilon * torch.sign(grad)
+    return delta.detach()
+
 def evaluate_fgsm(test_loader, model):
     # For MNIST, we use scalar epsilon
     epsilon = 0.3  # Standard for MNIST
@@ -153,16 +105,7 @@ def evaluate_fgsm(test_loader, model):
     model.eval()
     for i, (X, y) in enumerate(test_loader):
         X, y = X.cuda(), y.cuda()
-        delta = torch.zeros_like(X).cuda()  # Add .cuda() to ensure it's on the same device
-        delta.requires_grad = True
-        # Using a torch.enable_grad context to ensure gradients are computed
-        output = model(X + delta)
-        loss = F.cross_entropy(output, y)
-        loss.backward()
-        grad = delta.grad.detach()
-        delta.data = clamp(epsilon * torch.sign(grad), -epsilon, epsilon)
-        delta.data = clamp(delta, lower_limit - X, upper_limit - X)
-        delta = delta.detach()  # Detach to avoid graph accumulation
+        delta = attack_fgsm(model, X, y, epsilon)
         with torch.no_grad():
             output = model(X + delta)
             loss = F.cross_entropy(output, y)
