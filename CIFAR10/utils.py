@@ -100,15 +100,16 @@ def evaluate_pgd(test_loader, model, attack_iters, restarts):
     pgd_acc = 0
     n = 0
     model.eval()
-    for i, (X, y) in enumerate(test_loader):
-        X, y = X.cuda(), y.cuda()
-        pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
-        with torch.no_grad():
-            output = model(X + pgd_delta)
-            loss = F.cross_entropy(output, y)
-            pgd_loss += loss.item() * y.size(0)
-            pgd_acc += (output.max(1)[1] == y).sum().item()
-            n += y.size(0)
+    with torch.no_grad():
+        for i, (X, y) in enumerate(test_loader):
+            X, y = X.cuda(), y.cuda()
+            pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
+            with torch.no_grad():
+                output = model(X + pgd_delta)
+                loss = F.cross_entropy(output, y)
+                pgd_loss += loss.item() * y.size(0)
+                pgd_acc += (output.max(1)[1] == y).sum().item()
+                n += y.size(0)
     return pgd_loss/n, pgd_acc/n
 
 
@@ -133,27 +134,28 @@ def evaluate_fgsm(test_loader, model):
     fgsm_acc = 0
     n = 0
     model.eval()
-    for i, (X, y) in enumerate(test_loader):
-        X, y = X.cuda(), y.cuda()
-        delta = torch.zeros_like(X)
-        delta.requires_grad = True
-        with nullcontext():
-            output = model(X + delta)
-            loss = F.cross_entropy(output, y)
-        if delta.grad is not None:
-            delta.grad.zero_()
-        loss.backward()
-        grad = delta.grad.detach()
-        # Broadcast epsilon to match channel shape if needed
-        delta.data = clamp(epsilon * torch.sign(grad), -epsilon, epsilon)
-        delta.data = clamp(delta, lower_limit - X, upper_limit - X)
-        delta = delta.detach()  # Detach to avoid graph accumulation
-        with torch.no_grad():
-            output = model(X + delta)
-            loss = F.cross_entropy(output, y)
-            fgsm_loss += loss.item() * y.size(0)
-            fgsm_acc += (output.max(1)[1] == y).sum().item()
-            n += y.size(0)
+    with torch.no_grad():
+        for i, (X, y) in enumerate(test_loader):
+            X, y = X.cuda(), y.cuda()
+            delta = torch.zeros_like(X)
+            delta.requires_grad = True
+            with nullcontext():
+                output = model(X + delta)
+                loss = F.cross_entropy(output, y)
+            if delta.grad is not None:
+                delta.grad.zero_()
+            loss.backward()
+            grad = delta.grad.detach()
+            # Broadcast epsilon to match channel shape if needed
+            delta.data = clamp(epsilon * torch.sign(grad), -epsilon, epsilon)
+            delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+            delta = delta.detach()  # Detach to avoid graph accumulation
+            with torch.no_grad():
+                output = model(X + delta)
+                loss = F.cross_entropy(output, y)
+                fgsm_loss += loss.item() * y.size(0)
+                fgsm_acc += (output.max(1)[1] == y).sum().item()
+                n += y.size(0)
     return fgsm_loss/n, fgsm_acc/n
 
 def log_metrics(logfile, fieldnames, row):
