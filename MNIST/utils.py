@@ -8,17 +8,29 @@ import csv
 import os
 from contextlib import nullcontext
 
+# CIFAR10 stats
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2471, 0.2435, 0.2616)
 
+# MNIST stats - grayscale image normalization
+mnist_mean = (0.1307,)
+mnist_std = (0.3081,)
+
+# For CIFAR10
 mu = torch.tensor(cifar10_mean).view(3,1,1).cuda()
 std = torch.tensor(cifar10_std).view(3,1,1).cuda()
 
 upper_limit = ((1 - mu)/ std)
 lower_limit = ((0 - mu)/ std)
 
+# For MNIST, we use simpler bounds of [0,1] since we don't normalize
+
 
 def clamp(X, lower_limit, upper_limit):
+    """
+    Clamp tensor X between lower_limit and upper_limit.
+    Both limits can be either tensors of same shape as X or scalars.
+    """
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
 
@@ -60,8 +72,12 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, sc
     max_delta = torch.zeros_like(X).cuda()
     for zz in range(restarts):
         delta = torch.zeros_like(X).cuda()
-        for i in range(len(epsilon)):
-            delta[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
+        # Handle both MNIST (1 channel) and CIFAR10 (3 channels)
+        if X.shape[1] == 1:  # MNIST
+            delta.uniform_(-epsilon, epsilon)
+        else:  # CIFAR10 or other multi-channel images
+            for i in range(len(epsilon)):
+                delta[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
         delta.data = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
         for _ in range(attack_iters):
@@ -94,8 +110,9 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None, sc
 
 
 def evaluate_pgd(test_loader, model, attack_iters, restarts):
-    epsilon = (8 / 255.) / std
-    alpha = (2 / 255.) / std
+    # For MNIST, we use scalar epsilon and alpha
+    epsilon = 0.3  # Standard for MNIST
+    alpha = 0.01   # Step size for MNIST PGD
     pgd_loss = 0
     pgd_acc = 0
     n = 0
@@ -128,7 +145,8 @@ def evaluate_standard(test_loader, model):
     return test_loss/n, test_acc/n
 
 def evaluate_fgsm(test_loader, model):
-    epsilon = (8 / 255.) / std
+    # For MNIST, we use scalar epsilon
+    epsilon = 0.3  # Standard for MNIST
     fgsm_loss = 0
     fgsm_acc = 0
     n = 0
