@@ -123,7 +123,7 @@ def log_metrics(logfile, fieldnames, row):
             writer.writeheader()
         writer.writerow(row)
 
-def plot_metrics(logfile, output_dir=None):
+def plot_metrics(logfile, model_name, output_dir=None):
     """Plot learning rate, train loss, train acc, test acc, adversarial acc from a CSV log file."""
     import pandas as pd
     if not os.path.exists(logfile):
@@ -140,7 +140,7 @@ def plot_metrics(logfile, output_dir=None):
         plt.ylabel('Learning Rate')
         plt.title('Learning Rate Schedule')
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, 'learning_rate.png'))
+        plt.savefig(os.path.join(output_dir, f'{model_name}_learning_rate.png'))
         plt.close()
     # Plot train loss
     if 'train_loss' in df.columns:
@@ -150,7 +150,7 @@ def plot_metrics(logfile, output_dir=None):
         plt.ylabel('Train Loss')
         plt.title('Training Loss Curve')
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, 'train_loss.png'))
+        plt.savefig(os.path.join(output_dir, f'{model_name}_train_loss.png'))
         plt.close()
     # Plot train acc
     if 'train_acc' in df.columns:
@@ -167,7 +167,7 @@ def plot_metrics(logfile, output_dir=None):
         plt.title('Accuracy Curves')
         plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, 'accuracy.png'))
+        plt.savefig(os.path.join(output_dir, f'{model_name}_accuracy.png'))
         plt.close()
     # Plot adversarial accuracy separately if needed
     if 'pgd_acc' in df.columns:
@@ -177,7 +177,7 @@ def plot_metrics(logfile, output_dir=None):
         plt.ylabel('PGD Accuracy')
         plt.title('PGD Adversarial Accuracy')
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, 'pgd_accuracy.png'))
+        plt.savefig(os.path.join(output_dir, f'{model_name}_pgd_accuracy.png'))
         plt.close()
     if 'fgsm_acc' in df.columns:
         plt.figure()
@@ -186,5 +186,5 @@ def plot_metrics(logfile, output_dir=None):
         plt.ylabel('FGSM Accuracy')
         plt.title('FGSM Adversarial Accuracy')
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, 'fgsm_accuracy.png'))
+        plt.savefig(os.path.join(output_dir, f'{model_name}_fgsm_accuracy.png'))
         plt.close()

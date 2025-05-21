@@ -135,8 +135,24 @@ def main():
     torch.save(model.state_dict(), os.path.join(args.out_dir, f'train_free_output.pth'))
     logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
     print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
+    
+    # Evaluation
+    model_test = PreActResNet18().cuda()
+    model_test.load_state_dict(model.state_dict())
+    model_test.float()
+    model_test.eval()
+
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
+    test_loss, test_acc = evaluate_standard(test_loader, model_test)
+    fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
+
+    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
+    print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
+    
     # Plot all metrics at the end
-    plot_metrics(csv_logfile, args.out_dir)
+    plot_metrics(csv_logfile, 'free', args.out_dir)
 
 
 if __name__ == "__main__":
