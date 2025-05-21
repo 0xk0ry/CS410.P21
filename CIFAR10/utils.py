@@ -3,6 +3,9 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data.sampler import SubsetRandomSampler
 import numpy as np
+import matplotlib.pyplot as plt
+import csv
+import os
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2471, 0.2435, 0.2616)
@@ -141,3 +144,78 @@ def evaluate_fgsm(test_loader, model):
             fgsm_acc += (output.max(1)[1] == y).sum().item()
             n += y.size(0)
     return fgsm_loss/n, fgsm_acc/n
+
+def log_metrics(logfile, fieldnames, row):
+    """Append a row of metrics to a CSV file."""
+    file_exists = os.path.isfile(logfile)
+    with open(logfile, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+def plot_metrics(logfile, output_dir=None):
+    """Plot learning rate, train loss, train acc, test acc, adversarial acc from a CSV log file."""
+    import pandas as pd
+    if not os.path.exists(logfile):
+        print(f"Log file {logfile} does not exist.")
+        return
+    df = pd.read_csv(logfile)
+    if output_dir is None:
+        output_dir = os.path.dirname(logfile)
+    # Plot learning rate
+    if 'lr' in df.columns:
+        plt.figure()
+        plt.plot(df['epoch'], df['lr'])
+        plt.xlabel('Epoch')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Schedule')
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, 'learning_rate.png'))
+        plt.close()
+    # Plot train loss
+    if 'train_loss' in df.columns:
+        plt.figure()
+        plt.plot(df['epoch'], df['train_loss'])
+        plt.xlabel('Epoch')
+        plt.ylabel('Train Loss')
+        plt.title('Training Loss Curve')
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, 'train_loss.png'))
+        plt.close()
+    # Plot train acc
+    if 'train_acc' in df.columns:
+        plt.figure()
+        plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
+        if 'test_acc' in df.columns:
+            plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
+        if 'pgd_acc' in df.columns:
+            plt.plot(df['epoch'], df['pgd_acc'], label='PGD Acc')
+        if 'fgsm_acc' in df.columns:
+            plt.plot(df['epoch'], df['fgsm_acc'], label='FGSM Acc')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.title('Accuracy Curves')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, 'accuracy.png'))
+        plt.close()
+    # Plot adversarial accuracy separately if needed
+    if 'pgd_acc' in df.columns:
+        plt.figure()
+        plt.plot(df['epoch'], df['pgd_acc'], label='PGD Acc')
+        plt.xlabel('Epoch')
+        plt.ylabel('PGD Accuracy')
+        plt.title('PGD Adversarial Accuracy')
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, 'pgd_accuracy.png'))
+        plt.close()
+    if 'fgsm_acc' in df.columns:
+        plt.figure()
+        plt.plot(df['epoch'], df['fgsm_acc'], label='FGSM Acc')
+        plt.xlabel('Epoch')
+        plt.ylabel('FGSM Accuracy')
+        plt.title('FGSM Adversarial Accuracy')
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, 'fgsm_accuracy.png'))
+        plt.close()

@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from preact_resnet import PreActResNet18
 from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
-    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm)
+    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm, log_metrics, plot_metrics)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,9 @@ def main():
     elif args.lr_schedule == 'multistep':
         scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_steps / 2, lr_steps * 3 / 4], gamma=0.1)
 
+    csv_logfile = os.path.join(args.out_dir, f'train_fgsm_metrics_{args.delta_init}.csv')
+    fieldnames = ['epoch', 'lr', 'train_loss', 'train_acc', 'test_acc', 'pgd_acc', 'fgsm_acc']
+
     # Training
     prev_robust_acc = 0.
     start_train_time = time.time()
@@ -126,6 +129,21 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
             scheduler.step()
+        # Evaluate on test set and adversarial after each epoch
+        with torch.no_grad():
+            test_loss, test_acc = evaluate_standard(test_loader, model)
+            pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
+            fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
+        # Log metrics to CSV
+        log_metrics(csv_logfile, fieldnames, {
+            'epoch': epoch,
+            'lr': lr,
+            'train_loss': train_loss/train_n,
+            'train_acc': train_acc/train_n,
+            'test_acc': test_acc,
+            'pgd_acc': pgd_acc,
+            'fgsm_acc': fgsm_acc
+        })
         if args.early_stop:
             # Check current PGD robustness of model using random minibatch
             X, y = first_batch
@@ -164,6 +182,9 @@ def main():
     print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
     logger.info('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
     print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
+
+    # Plot all metrics at the end
+    plot_metrics(csv_logfile, args.out_dir)
 
 
 if __name__ == "__main__":
