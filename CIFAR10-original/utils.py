@@ -1,4 +1,4 @@
-import apex.amp as amp
+from torch.cuda import amp
 import torch
 import torch.nn.functional as F
 from torchvision import datasets, transforms
