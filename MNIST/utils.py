@@ -131,8 +131,7 @@ def plot_metrics(logfile, model_name, output_dir=None):
         return
     df = pd.read_csv(logfile)
     if output_dir is None:
-        output_dir = os.path.dirname(logfile)
-    # Plot learning rate
+        output_dir = os.path.dirname(logfile)    # Plot learning rate
     if 'lr' in df.columns:
         plt.figure()
         plt.plot(df['epoch'], df['lr'])
@@ -140,6 +139,7 @@ def plot_metrics(logfile, model_name, output_dir=None):
         plt.ylabel('Learning Rate')
         plt.title('Learning Rate Schedule')
         plt.grid(True)
+        plt.xticks(range(0, int(max(df['epoch'])) + 2, 2))  # Set x-ticks every 2 epochs
         plt.savefig(os.path.join(output_dir, f'{model_name}_learning_rate.png'))
         plt.close()
     # Plot train loss
@@ -150,9 +150,9 @@ def plot_metrics(logfile, model_name, output_dir=None):
         plt.ylabel('Train Loss')
         plt.title('Training Loss Curve')
         plt.grid(True)
+        plt.xticks(range(0, int(max(df['epoch'])) + 2, 2))  # Set x-ticks every 2 epochs
         plt.savefig(os.path.join(output_dir, f'{model_name}_train_loss.png'))
-        plt.close()
-    # Plot train acc
+        plt.close()    # Plot train acc
     if 'train_acc' in df.columns:
         plt.figure()
         plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
@@ -167,6 +167,7 @@ def plot_metrics(logfile, model_name, output_dir=None):
         plt.title('Accuracy Curves')
         plt.legend()
         plt.grid(True)
+        plt.xticks(range(0, int(max(df['epoch'])) + 2, 2))  # Set x-ticks every 2 epochs
         plt.savefig(os.path.join(output_dir, f'{model_name}_accuracy.png'))
         plt.close()
     # Plot adversarial accuracy separately if needed
@@ -177,6 +178,7 @@ def plot_metrics(logfile, model_name, output_dir=None):
         plt.ylabel('PGD Accuracy')
         plt.title('PGD Adversarial Accuracy')
         plt.grid(True)
+        plt.xticks(range(0, int(max(df['epoch'])) + 2, 2))  # Set x-ticks every 2 epochs
         plt.savefig(os.path.join(output_dir, f'{model_name}_pgd_accuracy.png'))
         plt.close()
     if 'fgsm_acc' in df.columns:
@@ -186,5 +188,6 @@ def plot_metrics(logfile, model_name, output_dir=None):
         plt.ylabel('FGSM Accuracy')
         plt.title('FGSM Adversarial Accuracy')
         plt.grid(True)
+        plt.xticks(range(0, int(max(df['epoch'])) + 2, 2))  # Set x-ticks every 2 epochs
         plt.savefig(os.path.join(output_dir, f'{model_name}_fgsm_accuracy.png'))
         plt.close()

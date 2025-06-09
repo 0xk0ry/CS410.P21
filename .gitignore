@@ -1,1 +1,6 @@
 *.pth
+*.png
+*.log
+*.csv
+*.txt
+*.pyc
