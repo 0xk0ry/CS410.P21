@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from apex import amp
+from torch.cuda import amp
 
 from preact_resnet import PreActResNet18
 from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
