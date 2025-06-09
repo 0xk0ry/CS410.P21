@@ -13,7 +13,7 @@ from torch.amp import GradScaler, autocast
 
 from preact_resnet import PreActResNet18
 from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
-    attack_pgd, evaluate_pgd, evaluate_standard)
+    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm, log_metrics, plot_metrics)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def main():
 
     if not os.path.exists(args.out_dir):
         os.mkdir(args.out_dir)
-    logfile = os.path.join(args.out_dir, 'output.log')
+    logfile = os.path.join(args.out_dir, f'train_fgsm_output_{args.delta_init}.log')
     if os.path.exists(logfile):
         os.remove(logfile)
 
@@ -57,12 +57,9 @@ def main():
         format='[%(asctime)s] - %(message)s',
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.INFO,
-        handlers=[
-            logging.FileHandler(logfile),
-            logging.StreamHandler()  # This sends output to console
-        ])
+        filename=logfile)
     logger.info(args)
-    
+    print(args)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -82,7 +79,7 @@ def main():
     if args.opt_level == 'O2':
         amp_args['master_weights'] = args.master_weights
     scaler = GradScaler()
-    
+
     if args.delta_init == 'previous':
         delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
 
@@ -92,6 +89,8 @@ def main():
             step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
     elif args.lr_schedule == 'multistep':
         scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_steps / 2, lr_steps * 3 / 4], gamma=0.1)
+    csv_logfile = os.path.join(args.out_dir, f'train_fgsm_metrics_{args.delta_init}.csv')
+    fieldnames = ['epoch', 'lr', 'train_loss', 'train_acc', 'test_acc', 'pgd_acc', 'fgsm_acc']
 
     # Training
     prev_robust_acc = 0.
@@ -137,6 +136,42 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
             scheduler.step()
+            
+            
+        # Evaluate on test set and adversarial after each epoch
+        # with torch.no_grad():
+        test_loss, test_acc = evaluate_standard(test_loader, model)
+        pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
+        fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
+        # Log metrics to CSV
+        lr = scheduler.get_lr()[0]
+        log_metrics(csv_logfile, fieldnames, {
+            'epoch': epoch,
+            'lr': lr,
+            'train_loss': train_loss/train_n,
+            'train_acc': train_acc/train_n,
+            'test_acc': test_acc,
+            'pgd_acc': pgd_acc,
+            'fgsm_acc': fgsm_acc
+        })
+        # Save checkpoint every 5 epochs
+        if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+            checkpoint_path = os.path.join(args.out_dir, f'checkpoint_fgsm_{args.delta_init}_epoch_{epoch+1}.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': train_loss/train_n,
+                'train_acc': train_acc/train_n,
+                'test_acc': test_acc,
+                'pgd_acc': pgd_acc,
+                'fgsm_acc': fgsm_acc,
+                'robust_acc': robust_acc if args.early_stop else None
+            }, checkpoint_path)
+            logger.info(f'Checkpoint saved at epoch {epoch+1} to {checkpoint_path}')
+            
+            
         if args.early_stop:
             # Check current PGD robustness of model using random minibatch
             X, y = first_batch
@@ -148,6 +183,8 @@ def main():
                 break
             prev_robust_acc = robust_acc
             best_state_dict = copy.deepcopy(model.state_dict())
+            
+            
         epoch_time = time.time()
         lr = scheduler.get_lr()[0]
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
@@ -157,9 +194,10 @@ def main():
     train_time = time.time()
     if not args.early_stop:
         best_state_dict = model.state_dict()
-    torch.save(best_state_dict, os.path.join(args.out_dir, 'model.pth'))
+    torch.save(best_state_dict, os.path.join(args.out_dir, f'train_fgsm_output_{args.delta_init}.pth'))
     logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
     print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
+
     # Evaluation
     model_test = PreActResNet18().cuda()
     model_test.load_state_dict(best_state_dict)
@@ -169,10 +207,15 @@ def main():
     pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
 
-    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
-    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc)
-    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
-    print('%.4f \t \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc))
-    print('Total train time: %.4f minutes' % ((train_time - start_train_time)/60))
+    fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
+    logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
+    logger.info('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
+    print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
+
+    # Plot all metrics at the end
+    plot_metrics(csv_logfile, 'fgsm_'+{args.delta_init}, args.out_dir)
+
+
 if __name__ == "__main__":
     main()
