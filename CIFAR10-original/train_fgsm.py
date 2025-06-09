@@ -111,7 +111,7 @@ def main():
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
             delta.requires_grad = True
             opt.zero_grad()  # Zero gradients before first backward pass
-            with autocast(device="cuda"):
+            with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
             scaler.scale(loss).backward()
@@ -122,7 +122,7 @@ def main():
 
             # Second forward-backward pass with the adversarial example
             opt.zero_grad()  # Zero gradients before second backward pass
-            with autocast(device="cuda"):
+            with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
             scaler.scale(loss).backward()
