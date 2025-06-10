@@ -216,7 +216,7 @@ def main():
     print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
 
     # Plot all metrics at the end
-    plot_metrics(csv_logfile, 'pgd_'+{args.delta_init},args.out_dir)
+    plot_metrics(csv_logfile, f'pgd_{args.delta_init}',args.out_dir)
 
 if __name__ == "__main__":
     main()
