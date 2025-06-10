@@ -278,7 +278,7 @@ def main():
     model_test.float()
     model_test.eval()
 
-    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 10, 1)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
     fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
 
