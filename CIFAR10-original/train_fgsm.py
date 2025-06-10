@@ -62,8 +62,8 @@ def main():
             logging.StreamHandler()  # This sends output to console
         ])
     logger.info(args)
+    print(args)
     
-
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
@@ -114,7 +114,7 @@ def main():
                     delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
             delta.requires_grad = True
-            opt.zero_grad()  # Zero gradients before first backward pass
+            opt.zero_grad()
             with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
@@ -137,6 +137,7 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
             scheduler.step()
+            
         if args.early_stop:
             # Check current PGD robustness of model using random minibatch
             X, y = first_batch
@@ -148,6 +149,7 @@ def main():
                 break
             prev_robust_acc = robust_acc
             best_state_dict = copy.deepcopy(model.state_dict())
+            
         epoch_time = time.time()
         lr = scheduler.get_lr()[0]
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
