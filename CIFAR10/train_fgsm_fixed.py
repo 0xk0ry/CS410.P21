@@ -96,8 +96,7 @@ def main():
 
     if args.delta_init == 'previous':
         delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
-    delta.requires_grad = True
-
+        
     lr_steps = args.epochs * len(train_loader)
     if args.lr_schedule == 'cyclic':
         scheduler = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=args.lr_min, max_lr=args.lr_max,
