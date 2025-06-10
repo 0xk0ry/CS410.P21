@@ -114,7 +114,7 @@ def main():
             for _ in range(args.minibatch_replays):
                 delta.requires_grad = True
                 opt.zero_grad()
-                with autocast():
+                with autocast("cuda"):
                     output = model(X + delta[:X.size(0)])
                     loss = F.cross_entropy(output, y)
 

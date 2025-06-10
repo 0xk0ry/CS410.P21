@@ -122,7 +122,7 @@ def main():
             opt.zero_grad()
             
             for _ in range(args.attack_iters):
-                with autocast():
+                with autocast("cuda"):
                     output = model(X + delta[:X.size(0)])
                     loss = F.cross_entropy(output, y)
                 scaler.scale(loss).backward()
@@ -132,7 +132,7 @@ def main():
                 delta.grad.zero_()
                 
             delta = delta.detach()
-            with autocast():
+            with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
                 

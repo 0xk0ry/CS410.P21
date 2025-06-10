@@ -145,7 +145,7 @@ def main():
             delta.requires_grad = True
             opt.zero_grad()
 
-            with autocast():
+            with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
 
@@ -160,7 +160,7 @@ def main():
             # Second forward-backward pass with the adversarial example
             opt.zero_grad()  # Zero gradients before second backward pass
 
-            with autocast():
+            with autocast("cuda"):
                 output = model(X + delta[:X.size(0)])
                 loss = F.cross_entropy(output, y)
 
