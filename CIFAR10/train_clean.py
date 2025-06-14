@@ -13,7 +13,7 @@ from torch.cuda import amp
 from torch.amp import GradScaler, autocast
 
 from preact_resnet import PreActResNet18
-from CIFAR10.utils import (upper_limit, lower_limit, std, clamp, get_loaders,
+from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
                    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm, log_metrics, plot_metrics)
 
 logger = logging.getLogger(__name__)
