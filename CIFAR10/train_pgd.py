@@ -7,9 +7,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda import amp
+from torch.amp import GradScaler, autocast
 
 from preact_resnet import PreActResNet18
-from utils import (upper_limit, lower_limit, std, clamp, get_loaders,
+from CIFAR10.utils import (upper_limit, lower_limit, std, clamp, get_loaders,
     evaluate_pgd, evaluate_standard, evaluate_fgsm, log_metrics, plot_metrics)
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ def main():
 
     if not os.path.exists(args.out_dir):
         os.mkdir(args.out_dir)
-    logfile = os.path.join(args.out_dir, f'train_pgd_output_{args.delta_init}.log')
+    logfile = os.path.join(args.out_dir, f'cifar10_pgd_{args.delta_init}.log')
     if os.path.exists(logfile):
         os.remove(logfile)
 
@@ -55,7 +57,10 @@ def main():
         format='[%(asctime)s] - %(message)s',
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.INFO,
-        filename=logfile)
+        handlers=[
+            logging.FileHandler(logfile),
+            logging.StreamHandler()  # This sends output to console
+        ])
     logger.info(args)
     print(args)
 
@@ -71,9 +76,13 @@ def main():
     model = PreActResNet18().cuda()
     model.train()
 
-    opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
-    criterion = nn.CrossEntropyLoss()
-    scaler = torch.amp.GradScaler('cuda')
+    opt = torch.optim.SGD(model.parameters(), lr=args.lr_max,
+                          momentum=args.momentum, weight_decay=args.weight_decay)
+    amp_args = dict(opt_level=args.opt_level,
+                    loss_scale=args.loss_scale, verbosity=False)
+    if args.opt_level == 'O2':
+        amp_args['master_weights'] = args.master_weights
+    scaler = GradScaler()
 
     lr_steps = args.epochs * len(train_loader)
     if args.lr_schedule == 'cyclic':
@@ -82,14 +91,20 @@ def main():
     elif args.lr_schedule == 'multistep':
         scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_steps / 2, lr_steps * 3 / 4], gamma=0.1)
 
-    csv_logfile = os.path.join(args.out_dir, f'train_pgd_metrics_{args.delta_init}.csv')
+    csv_logfile = os.path.join(args.out_dir, f'cifar10_pgd_metrics_{args.delta_init}.csv')
     fieldnames = ['epoch', 'lr', 'train_loss', 'train_acc', 'test_acc', 'pgd_acc', 'fgsm_acc']
 
     # Training
     start_train_time = time.time()
     logger.info('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
     print('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
+    
+    # For scheduler step at epoch level
+    # Only step per batch for cyclic schedule
+    batch_scheduler = args.lr_schedule == 'cyclic'
+    
     for epoch in range(args.epochs):
+        model.train()
         start_epoch_time = time.time()
         train_loss = 0
         train_acc = 0
@@ -97,37 +112,56 @@ def main():
         for i, (X, y) in enumerate(train_loader):
             X, y = X.cuda(), y.cuda()
             delta = torch.zeros_like(X).cuda()
+            
             if args.delta_init == 'random':
                 for i in range(len(epsilon)):
                     delta[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+                
             delta.requires_grad = True
+            opt.zero_grad()
+            
             for _ in range(args.attack_iters):
-                with torch.amp.autocast('cuda'):
-                    output = model(X + delta)
-                    loss = criterion(output, y)
+                with autocast("cuda"):
+                    output = model(X + delta[:X.size(0)])
+                    loss = F.cross_entropy(output, y)
                 scaler.scale(loss).backward()
                 grad = delta.grad.detach()
                 delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
                 delta.data = clamp(delta, lower_limit - X, upper_limit - X)
                 delta.grad.zero_()
+                
             delta = delta.detach()
-            with torch.amp.autocast('cuda'):
-                output = model(X + delta)
-                loss = criterion(output, y)
-            opt.zero_grad()
+            with autocast("cuda"):
+                output = model(X + delta[:X.size(0)])
+                loss = F.cross_entropy(output, y)
+                
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
+            
             train_loss += loss.item() * y.size(0)
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
             scheduler.step()
-        # Evaluate on test set and adversarial after each epoch
+
+        if not batch_scheduler:
+            scheduler.step()
+
+        was_training = model.training
+
+        model.eval()  # Set to evaluation mode
         test_loss, test_acc = evaluate_standard(test_loader, model)
         pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
         fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
-        lr = scheduler.get_lr()[0]
+        torch.cuda.empty_cache()
+
+        if was_training:
+            model.train()
+        try:
+            lr = scheduler.get_last_lr()[0]
+        except:
+            lr = scheduler.get_lr()[0]  # Fallback for older PyTorch versions
         # Log metrics to CSV
         log_metrics(csv_logfile, fieldnames, {
             'epoch': epoch,
@@ -172,7 +206,7 @@ def main():
     model_test.float()
     model_test.eval()
 
-    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 50, 10)
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 10, 1)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
     fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
 
@@ -182,7 +216,7 @@ def main():
     print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' % (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
 
     # Plot all metrics at the end
-    plot_metrics(csv_logfile, 'pgd_'+{args.delta_init},args.out_dir)
+    plot_metrics(csv_logfile, f'pgd_{args.delta_init}',args.out_dir)
 
 if __name__ == "__main__":
     main()

@@ -13,7 +13,7 @@ from torch.cuda import amp
 from torch.amp import GradScaler, autocast
 
 from preact_resnet import PreActResNet18
-from utils_fixed import (upper_limit, lower_limit, std, clamp, get_loaders,
+from CIFAR10.utils import (upper_limit, lower_limit, std, clamp, get_loaders,
                    attack_pgd, evaluate_pgd, evaluate_standard, evaluate_fgsm, log_metrics, plot_metrics)
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ def main():
             opt, milestones=[lr_steps / 2, lr_steps * 3 / 4], gamma=0.1)
 
     csv_logfile = os.path.join(
-        args.out_dir, f'cifar10_fgsm_metrics_{args.delta_init}.csv')
+        args.out_dir, f'cifar10_clean_metrics.csv')
     fieldnames = ['epoch', 'lr', 'train_loss',
                   'train_acc', 'test_acc', 'pgd_acc', 'fgsm_acc']
 
@@ -116,8 +116,6 @@ def main():
     logger.info('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
     print('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
 
-    # For scheduler step at epoch level
-    # Only step per batch for cyclic schedule
     batch_scheduler = args.lr_schedule == 'cyclic'
 
     for epoch in range(args.epochs):
@@ -132,37 +130,10 @@ def main():
             if i == 0:
                 first_batch = (X, y)
 
-            if args.delta_init != 'previous':
-                delta = torch.zeros_like(X).cuda()
-
-            if args.delta_init == 'random':
-                for j in range(len(epsilon)):
-                    delta[:, j, :, :].uniform_(-epsilon[j]
-                                               [0][0].item(), epsilon[j][0][0].item())
-                delta.data = clamp(delta, lower_limit - X, upper_limit - X)
-
-            delta.requires_grad = True
             opt.zero_grad()
-
             with autocast("cuda"):
-                output = model(X + delta[:X.size(0)])
+                output = model(X)
                 loss = F.cross_entropy(output, y)
-
-            scaler.scale(loss).backward()
-            grad = delta.grad.detach()
-            delta.data = clamp(
-                delta + alpha * torch.sign(grad), -epsilon, epsilon)
-            delta.data[:X.size(0)] = clamp(
-                delta[:X.size(0)], lower_limit - X, upper_limit - X)
-            delta = delta.detach()
-
-            # Second forward-backward pass with the adversarial example
-            opt.zero_grad()  # Zero gradients before second backward pass
-
-            with autocast("cuda"):
-                output = model(X + delta[:X.size(0)])
-                loss = F.cross_entropy(output, y)
-
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
@@ -171,36 +142,25 @@ def main():
             train_acc += (output.max(1)[1] == y).sum().item()
             train_n += y.size(0)
 
-            # Step scheduler per batch only for cyclic schedule
             if batch_scheduler:
                 scheduler.step()
 
-        # Step scheduler once per epoch for non-cyclic schedules
         if not batch_scheduler:
             scheduler.step()
 
         # Store training mode and evaluate
         was_training = model.training
-
         model.eval()  # Set to evaluation mode
         test_loss, test_acc = evaluate_standard(test_loader, model)
         pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 10, 1)
         fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model)
-
-        # Free up memory
         torch.cuda.empty_cache()
-
-        # Restore training mode
         if was_training:
             model.train()
-
-        # Get learning rate (use get_last_lr() to avoid deprecation warning)
         try:
             lr = scheduler.get_last_lr()[0]
         except:
-            lr = scheduler.get_lr()[0]  # Fallback for older PyTorch versions
-
-        # Log metrics to CSV
+            lr = scheduler.get_lr()[0]
         log_metrics(csv_logfile, fieldnames, {
             'epoch': epoch,
             'lr': lr,
@@ -210,15 +170,10 @@ def main():
             'pgd_acc': pgd_acc,
             'fgsm_acc': fgsm_acc
         })
-
-        # Save checkpoint every 5 epochs
         if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
             checkpoint_path = os.path.join(
-                args.out_dir, f'checkpoint_fgsm_{args.delta_init}_epoch_{epoch+1}.pth')
-
-            # Check if robust_acc has been defined before using it
+                args.out_dir, f'checkpoint_clean_epoch_{epoch+1}.pth')
             robust_acc_value = robust_acc if 'robust_acc' in locals() else None
-
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -233,10 +188,8 @@ def main():
             }, checkpoint_path)
             logger.info(
                 f'Checkpoint saved at epoch {epoch+1} to {checkpoint_path}')
-
-        # Early stopping check
         if args.early_stop:
-            model.eval()  # Ensure model is in eval mode for robustness check
+            model.eval()
             X, y = first_batch
             pgd_delta = attack_pgd(model, X, y, epsilon,
                                    pgd_alpha, 5, 1, opt, scaler)
@@ -250,37 +203,28 @@ def main():
                 break
             prev_robust_acc = robust_acc
             best_state_dict = copy.deepcopy(model.state_dict())
-            model.train()  # Set back to training mode
-
+            model.train()
         epoch_time = time.time()
-
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
                     epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n)
         print('%d \t %.1f \t \t %.4f \t %.4f \t %.4f' % (
             epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n))
-
-    # End of training
     train_time = time.time()
     if not args.early_stop:
         best_state_dict = model.state_dict()
-
     torch.save(best_state_dict, os.path.join(
-        args.out_dir, f'train_fgsm_output_{args.delta_init}.pth'))
+        args.out_dir, f'train_clean_output.pth'))
     logger.info('Total train time: %.4f minutes',
                 (train_time - start_train_time)/60)
     print('Total train time: %.4f minutes' %
           ((train_time - start_train_time)/60))
-
-    # Evaluation
     model_test = PreActResNet18().cuda()
     model_test.load_state_dict(best_state_dict)
     model_test.float()
     model_test.eval()
-
     pgd_loss, pgd_acc = evaluate_pgd(test_loader, model_test, 10, 1)
     test_loss, test_acc = evaluate_standard(test_loader, model_test)
     fgsm_loss, fgsm_acc = evaluate_fgsm(test_loader, model_test)
-
     logger.info(
         'Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
     print('Test Loss \t Test Acc \t PGD Loss \t PGD Acc \t FGSM Loss \t FGSM Acc')
@@ -288,9 +232,7 @@ def main():
                 test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc)
     print('%.4f \t \t %.4f \t %.4f \t %.4f \t %.4f \t %.4f' %
           (test_loss, test_acc, pgd_loss, pgd_acc, fgsm_loss, fgsm_acc))
-
-    # Plot all metrics at the end
-    plot_metrics(csv_logfile, f'fgsm_{args.delta_init}', args.out_dir)
+    plot_metrics(csv_logfile, f'clean', args.out_dir)
 
 
 if __name__ == "__main__":
